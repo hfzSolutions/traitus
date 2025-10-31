@@ -1,16 +1,34 @@
-# traitus
+# Traitus AI Chat
 
-A new Flutter project.
+Modern, clean AI chat app powered by OpenRouter.
 
-## Getting Started
+## Setup
 
-This project is a starting point for a Flutter application.
+1) Create a `.env` file at the project root:
 
-A few resources to get you started if this is your first Flutter project:
+```
+OPENROUTER_API_KEY=sk-or-...
+# Optional overrides
+OPENROUTER_MODEL=openrouter/auto
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_SITE_URL=https://your-site.example
+OPENROUTER_APP_NAME=Traitus AI Chat
+```
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+2) Install dependencies:
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+```
+flutter pub get
+```
+
+3) Run the app:
+
+```
+flutter run
+```
+
+## Notes
+
+- Uses OpenAI-compatible `POST /chat/completions` on OpenRouter.
+- Markdown rendering for assistant replies.
+- Material 3 theming with light/dark support.
