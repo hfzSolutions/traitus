@@ -6,7 +6,9 @@ import 'package:traitus/models/note.dart';
 import 'package:traitus/providers/notes_provider.dart';
 
 class NotesPage extends StatelessWidget {
-  const NotesPage({super.key});
+  const NotesPage({super.key, this.isInTabView = false});
+  
+  final bool isInTabView;
 
   String _formatTime(DateTime dateTime) {
     final now = DateTime.now();
@@ -32,6 +34,7 @@ class NotesPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Saved Notes'),
+        automaticallyImplyLeading: !isInTabView,
       ),
       body: Consumer<NotesProvider>(
         builder: (context, notesProvider, _) {

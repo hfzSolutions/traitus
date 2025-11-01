@@ -10,6 +10,9 @@ class AiChat {
   final String? lastMessage;
   final DateTime? lastMessageTime;
   final DateTime createdAt;
+  final bool isPinned;
+  final int sortOrder;
+  final String? avatarUrl;
 
   AiChat({
     String? id,
@@ -19,6 +22,9 @@ class AiChat {
     this.lastMessage,
     this.lastMessageTime,
     DateTime? createdAt,
+    this.isPinned = false,
+    this.sortOrder = 0,
+    this.avatarUrl,
   })  : id = id ?? _uuid.v4(),
         createdAt = createdAt ?? DateTime.now();
 
@@ -28,6 +34,9 @@ class AiChat {
     String? model,
     String? lastMessage,
     DateTime? lastMessageTime,
+    bool? isPinned,
+    int? sortOrder,
+    String? avatarUrl,
   }) {
     return AiChat(
       id: id,
@@ -37,6 +46,9 @@ class AiChat {
       lastMessage: lastMessage ?? this.lastMessage,
       lastMessageTime: lastMessageTime ?? this.lastMessageTime,
       createdAt: createdAt,
+      isPinned: isPinned ?? this.isPinned,
+      sortOrder: sortOrder ?? this.sortOrder,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
     );
   }
 
@@ -46,9 +58,12 @@ class AiChat {
       'name': name,
       'description': description,
       'model': model,
-      'lastMessage': lastMessage,
-      'lastMessageTime': lastMessageTime?.toIso8601String(),
-      'createdAt': createdAt.toIso8601String(),
+      'last_message': lastMessage,
+      'last_message_time': lastMessageTime?.toIso8601String(),
+      'created_at': createdAt.toIso8601String(),
+      'is_pinned': isPinned,
+      'sort_order': sortOrder,
+      'avatar_url': avatarUrl,
     };
   }
 
@@ -58,11 +73,14 @@ class AiChat {
       name: json['name'] as String,
       description: json['description'] as String,
       model: json['model'] as String,
-      lastMessage: json['lastMessage'] as String?,
-      lastMessageTime: json['lastMessageTime'] != null
-          ? DateTime.parse(json['lastMessageTime'] as String)
+      lastMessage: json['last_message'] as String?,
+      lastMessageTime: json['last_message_time'] != null
+          ? DateTime.parse(json['last_message_time'] as String)
           : null,
-      createdAt: DateTime.parse(json['createdAt'] as String),
+      createdAt: DateTime.parse(json['created_at'] as String),
+      isPinned: json['is_pinned'] as bool? ?? false,
+      sortOrder: json['sort_order'] as int? ?? 0,
+      avatarUrl: json['avatar_url'] as String?,
     );
   }
 }

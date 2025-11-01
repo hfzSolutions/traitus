@@ -2,12 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:provider/provider.dart';
+import 'package:image_picker/image_picker.dart';
+import 'dart:io';
+import 'package:traitus/models/ai_chat.dart';
 import 'package:traitus/models/chat_message.dart';
 import 'package:traitus/models/note.dart';
 import 'package:traitus/providers/chat_provider.dart';
 import 'package:traitus/providers/notes_provider.dart';
 import 'package:traitus/providers/chats_list_provider.dart';
 import 'package:traitus/ui/notes_page.dart';
+import 'package:traitus/services/storage_service.dart';
 
 class ChatPage extends StatefulWidget {
   const ChatPage({super.key, required this.chatId});
@@ -21,20 +25,74 @@ class ChatPage extends StatefulWidget {
 class _ChatPageState extends State<ChatPage> {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  late final ChatProvider _chatProvider;
+  bool _isInitialScroll = true;
 
   @override
   void initState() {
     super.initState();
+    // Store a reference to ChatProvider to use in dispose()
+    _chatProvider = context.read<ChatProvider>();
+    _chatProvider.addListener(_onChatUpdate);
+    _scrollController.addListener(_onScroll);
+    
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollToBottom();
+      _isInitialScroll = false;
     });
   }
 
   @override
   void dispose() {
+    _chatProvider.removeListener(_onChatUpdate);
+    _scrollController.removeListener(_onScroll);
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+  
+  void _onChatUpdate() {
+    // Auto-scroll to bottom when new messages arrive
+    // But only if we're not currently loading older messages
+    if (!_chatProvider.isLoadingOlder) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _scrollToBottom();
+        }
+      });
+    }
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    
+    // Check if user has scrolled near the top (within 200 pixels)
+    if (_scrollController.position.pixels <= 200 && 
+        !_chatProvider.isLoadingOlder &&
+        _chatProvider.hasMoreMessages &&
+        !_isInitialScroll) {
+      _loadOlderMessages();
+    }
+  }
+
+  Future<void> _loadOlderMessages() async {
+    if (_chatProvider.isLoadingOlder) return;
+    
+    // Save current scroll position and max extent
+    final scrollOffset = _scrollController.offset;
+    final maxExtent = _scrollController.position.maxScrollExtent;
+    
+    await _chatProvider.loadOlderMessages();
+    
+    // Restore scroll position after loading older messages
+    // This prevents the jarring jump when messages are inserted at the top
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        final newMaxExtent = _scrollController.position.maxScrollExtent;
+        final difference = newMaxExtent - maxExtent;
+        _scrollController.jumpTo(scrollOffset + difference);
+      }
+    });
   }
 
   void _scrollToBottom() {
@@ -53,14 +111,21 @@ class _ChatPageState extends State<ChatPage> {
     _controller.clear();
     
     final chatProvider = context.read<ChatProvider>();
-    await chatProvider.sendUserMessage(text);
+    
+    // Start sending the message (this will add user message immediately)
+    final sendFuture = chatProvider.sendUserMessage(text);
+    
+    // Scroll to show the user's message immediately after it's added
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollToBottom();
+    });
+    
+    // Wait for the response to complete
+    await sendFuture;
     
     // Update the last message in the chat list
     final chatsListProvider = context.read<ChatsListProvider>();
     chatsListProvider.updateLastMessage(widget.chatId, text);
-    
-    await Future.delayed(const Duration(milliseconds: 100));
-    _scrollToBottom();
   }
 
   void _copyMessage(String content) {
@@ -188,6 +253,52 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
+  void _showEditChatDialog(BuildContext context) {
+    final chatsListProvider = context.read<ChatsListProvider>();
+    final chat = chatsListProvider.getChatById(widget.chatId);
+    
+    if (chat == null) return;
+    
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => _EditChatModal(chat: chat),
+    );
+  }
+
+  void _showClearChatDialog(BuildContext context) {
+    final theme = Theme.of(context);
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clear All Messages'),
+        content: const Text('Delete all messages in this chat? This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              _chatProvider.resetConversation();
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('All messages cleared'),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            },
+            child: Text(
+              'Clear',
+              style: TextStyle(color: theme.colorScheme.error),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -199,7 +310,56 @@ class _ChatPageState extends State<ChatPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(chatName),
+        title: Row(
+          children: [
+            // Avatar - Tappable
+            GestureDetector(
+              onTap: () => _showEditChatDialog(context),
+              child: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primaryContainer,
+                  shape: BoxShape.circle,
+                ),
+                child: chat?.avatarUrl != null && chat!.avatarUrl!.isNotEmpty
+                    ? ClipOval(
+                        child: Image.network(
+                          chat.avatarUrl!,
+                          width: 40,
+                          height: 40,
+                          fit: BoxFit.cover,
+                          cacheWidth: 80,
+                          cacheHeight: 80,
+                          errorBuilder: (context, error, stackTrace) {
+                            return Icon(
+                              Icons.smart_toy_outlined,
+                              size: 20,
+                              color: theme.colorScheme.onPrimaryContainer,
+                            );
+                          },
+                        ),
+                      )
+                    : Icon(
+                        Icons.smart_toy_outlined,
+                        size: 20,
+                        color: theme.colorScheme.onPrimaryContainer,
+                      ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            // Chat name - Also tappable for consistency
+            Expanded(
+              child: GestureDetector(
+                onTap: () => _showEditChatDialog(context),
+                child: Text(
+                  chatName,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+          ],
+        ),
         actions: [
           IconButton(
             tooltip: 'Saved notes',
@@ -215,6 +375,7 @@ class _ChatPageState extends State<ChatPage> {
           ),
           Consumer<ChatProvider>(
             builder: (context, chat, _) {
+              // Only show stop button when AI is generating
               if (chat.isSending) {
                 return IconButton(
                   tooltip: 'Stop generating',
@@ -222,36 +383,41 @@ class _ChatPageState extends State<ChatPage> {
                   onPressed: () => chat.stopGeneration(),
                 );
               }
-              if (chat.hasMessages) {
-                return IconButton(
-                  tooltip: 'New chat',
-                  icon: const Icon(Icons.refresh_rounded),
-                  onPressed: () {
-                    showDialog(
-                      context: context,
-                      builder: (context) => AlertDialog(
-                        title: const Text('New Chat'),
-                        content: const Text('Start a new conversation?'),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(context),
-                            child: const Text('Cancel'),
-                          ),
-                          TextButton(
-                            onPressed: () {
-                              chat.resetConversation();
-                              Navigator.pop(context);
-                            },
-                            child: const Text('New Chat'),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                );
-              }
               return const SizedBox.shrink();
             },
+          ),
+          PopupMenuButton<String>(
+            tooltip: 'More options',
+            icon: const Icon(Icons.more_vert),
+            onSelected: (value) {
+              if (value == 'edit') {
+                _showEditChatDialog(context);
+              } else if (value == 'clear') {
+                _showClearChatDialog(context);
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'edit',
+                child: Row(
+                  children: [
+                    Icon(Icons.edit_outlined),
+                    SizedBox(width: 12),
+                    Text('Edit Chat Settings'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'clear',
+                child: Row(
+                  children: [
+                    Icon(Icons.delete_sweep_outlined),
+                    SizedBox(width: 12),
+                    Text('Clear All Messages'),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -261,6 +427,27 @@ class _ChatPageState extends State<ChatPage> {
             Expanded(
               child: Consumer<ChatProvider>(
                 builder: (context, chat, _) {
+                  // Show loading indicator while messages are being loaded
+                  if (chat.isLoading) {
+                    return Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          CircularProgressIndicator(
+                            color: theme.colorScheme.primary,
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'Loading messages...',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: theme.colorScheme.onSurface.withOpacity(0.6),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+
                   // Filter out system messages and pending messages that are no longer needed
                   final items = chat.messages
                       .where((m) => m.role != ChatRole.system)
@@ -282,12 +469,22 @@ class _ChatPageState extends State<ChatPage> {
                       child: ListView.separated(
                         controller: _scrollController,
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                        itemCount: items.length,
+                        itemCount: items.length + (chat.hasMoreMessages ? 1 : 0),
                         separatorBuilder: (_, __) => const SizedBox(height: 24),
                         itemBuilder: (context, index) {
-                          final message = items[index];
+                          // Show loading indicator at the top if there are more messages
+                          if (index == 0 && chat.hasMoreMessages) {
+                            return _LoadMoreIndicator(
+                              isLoading: chat.isLoadingOlder,
+                              theme: theme,
+                            );
+                          }
+                          
+                          // Adjust index if we showed the load more indicator
+                          final messageIndex = chat.hasMoreMessages ? index - 1 : index;
+                          final message = items[messageIndex];
                           final isUser = message.role == ChatRole.user;
-                          final isLast = index == items.length - 1;
+                          final isLast = messageIndex == items.length - 1;
                           final isLastAssistant = isLast &&
                               !isUser &&
                               !message.isPending &&
@@ -736,6 +933,53 @@ class _LoadingMessage extends StatelessWidget {
   }
 }
 
+class _LoadMoreIndicator extends StatelessWidget {
+  const _LoadMoreIndicator({
+    required this.isLoading,
+    required this.theme,
+  });
+
+  final bool isLoading;
+  final ThemeData theme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (isLoading)
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: theme.colorScheme.primary,
+                ),
+              )
+            else
+              Icon(
+                Icons.keyboard_arrow_up,
+                color: theme.colorScheme.onSurface.withOpacity(0.4),
+                size: 20,
+              ),
+            const SizedBox(height: 8),
+            Text(
+              isLoading ? 'Loading older messages…' : 'Scroll up for older messages',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurface.withOpacity(0.5),
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _InputBar extends StatelessWidget {
   const _InputBar({
     required this.controller,
@@ -1065,6 +1309,323 @@ class _SaveNoteBottomSheetState extends State<_SaveNoteBottomSheet> {
           // Bottom padding for safe area
           SizedBox(height: mediaQuery.padding.bottom),
         ],
+      ),
+    );
+  }
+}
+
+class _EditChatModal extends StatefulWidget {
+  const _EditChatModal({required this.chat});
+
+  final AiChat chat;
+
+  @override
+  State<_EditChatModal> createState() => _EditChatModalState();
+}
+
+class _EditChatModalState extends State<_EditChatModal> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _nameController;
+  late final TextEditingController _descriptionController;
+  final _imagePicker = ImagePicker();
+  final _storageService = StorageService();
+  String? _selectedImagePath;
+  bool _isUploading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController(text: widget.chat.name);
+    _descriptionController = TextEditingController(text: widget.chat.description);
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _descriptionController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickImage() async {
+    try {
+      final XFile? image = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 512,
+        maxHeight: 512,
+        imageQuality: 85,
+      );
+
+      if (image != null) {
+        setState(() {
+          _selectedImagePath = image.path;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to pick image: $e'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _saveChanges() async {
+    if (_formKey.currentState!.validate()) {
+      setState(() {
+        _isUploading = true;
+      });
+
+      try {
+        String? avatarUrl = widget.chat.avatarUrl;
+
+        // Upload new avatar if selected
+        if (_selectedImagePath != null) {
+          avatarUrl = await _storageService.updateAvatar(
+            _selectedImagePath!,
+            widget.chat.id,
+            widget.chat.avatarUrl,
+          );
+        }
+
+        final updatedChat = widget.chat.copyWith(
+          name: _nameController.text.trim(),
+          description: _descriptionController.text.trim(),
+          avatarUrl: avatarUrl,
+        );
+
+        if (mounted) {
+          context.read<ChatsListProvider>().updateChat(updatedChat);
+          Navigator.pop(context);
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Chat settings updated!'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to update: $e'),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isUploading = false;
+          });
+        }
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final mediaQuery = MediaQuery.of(context);
+
+    return Padding(
+      padding: EdgeInsets.only(
+        bottom: mediaQuery.viewInsets.bottom,
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle bar
+            Container(
+              margin: const EdgeInsets.only(top: 12),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: theme.colorScheme.onSurfaceVariant.withOpacity(0.4),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // Title
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                children: [
+                  Icon(Icons.edit_outlined, color: theme.colorScheme.primary, size: 28),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Edit Chat Settings',
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            // Form content
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Avatar picker
+                    Center(
+                      child: GestureDetector(
+                        onTap: _isUploading ? null : _pickImage,
+                        child: Stack(
+                          children: [
+                            Container(
+                              width: 100,
+                              height: 100,
+                              decoration: BoxDecoration(
+                                color: theme.colorScheme.primaryContainer,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: theme.colorScheme.primary,
+                                  width: 2,
+                                ),
+                              ),
+                              child: _selectedImagePath != null
+                                  ? ClipOval(
+                                      child: Image.file(
+                                        File(_selectedImagePath!),
+                                        fit: BoxFit.cover,
+                                        width: 100,
+                                        height: 100,
+                                      ),
+                                    )
+                                  : (widget.chat.avatarUrl != null && widget.chat.avatarUrl!.isNotEmpty)
+                                      ? ClipOval(
+                                          child: Image.network(
+                                            widget.chat.avatarUrl!,
+                                            fit: BoxFit.cover,
+                                            width: 100,
+                                            height: 100,
+                                            errorBuilder: (context, error, stackTrace) {
+                                              return Icon(
+                                                Icons.smart_toy_outlined,
+                                                size: 48,
+                                                color: theme.colorScheme.onPrimaryContainer,
+                                              );
+                                            },
+                                          ),
+                                        )
+                                      : Icon(
+                                          Icons.smart_toy_outlined,
+                                          size: 48,
+                                          color: theme.colorScheme.onPrimaryContainer,
+                                        ),
+                            ),
+                            Positioned(
+                              bottom: 0,
+                              right: 0,
+                              child: Container(
+                                padding: const EdgeInsets.all(6),
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.primary,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  Icons.camera_alt,
+                                  size: 20,
+                                  color: theme.colorScheme.onPrimary,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Center(
+                      child: Text(
+                        'Tap to change avatar',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurface.withOpacity(0.6),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    TextFormField(
+                      controller: _nameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Chat Name',
+                        hintText: 'e.g., Code Assistant, Writing Helper',
+                        prefixIcon: Icon(Icons.person_outline),
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Please enter a name';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _descriptionController,
+                      decoration: const InputDecoration(
+                        labelText: 'System Prompt',
+                        hintText: 'e.g., You are an expert coding assistant specialized in Flutter and Dart',
+                        helperText: 'Define the AI\'s personality and expertise',
+                        helperMaxLines: 2,
+                        prefixIcon: Icon(Icons.psychology_outlined),
+                        border: OutlineInputBorder(),
+                      ),
+                      maxLines: 4,
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Please enter a system prompt';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: _isUploading ? null : () => Navigator.pop(context),
+                            child: const Text('Cancel'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          flex: 2,
+                          child: FilledButton.icon(
+                            onPressed: _isUploading ? null : _saveChanges,
+                            icon: _isUploading
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.check),
+                            label: Text(_isUploading ? 'Saving...' : 'Save Changes'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: mediaQuery.padding.bottom + 8),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
