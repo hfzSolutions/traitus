@@ -9,12 +9,19 @@ class OpenRouterApi {
   final http.Client _client;
 
   static const String _defaultBaseUrl = 'https://openrouter.ai/api/v1';
-  static const String _defaultModel = 'openrouter/auto';
 
   String get _apiKey {
     final value = dotenv.env['OPENROUTER_API_KEY'];
     if (value == null || value.isEmpty) {
       throw StateError('Missing OPENROUTER_API_KEY. Add it to a .env file.');
+    }
+    return value;
+  }
+
+  String get _model {
+    final value = dotenv.env['OPENROUTER_MODEL'];
+    if (value == null || value.isEmpty) {
+      throw StateError('Missing OPENROUTER_MODEL. Add it to a .env file.');
     }
     return value;
   }
@@ -32,7 +39,7 @@ class OpenRouterApi {
     final uri = _endpointUri('/chat/completions');
 
     final requestBody = <String, dynamic>{
-      'model': model ?? dotenv.env['OPENROUTER_MODEL'] ?? _defaultModel,
+      'model': model ?? _model,
       'messages': messages,
       if (temperature != null) 'temperature': temperature,
     };

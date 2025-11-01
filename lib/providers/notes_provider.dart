@@ -1,65 +1,79 @@
-import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:traitus/models/note.dart';
+import 'package:traitus/services/database_service.dart';
 
 class NotesProvider with ChangeNotifier {
-  List<Note> _notes = [];
-  static const String _storageKey = 'saved_notes';
-
-  List<Note> get notes => List.unmodifiable(_notes);
-
-  bool get hasNotes => _notes.isNotEmpty;
-
   NotesProvider() {
     _loadNotes();
   }
 
+  final DatabaseService _dbService = DatabaseService();
+  List<Note> _notes = [];
+  bool _isLoading = false;
+  String? _error;
+
+  List<Note> get notes => List.unmodifiable(_notes);
+  bool get hasNotes => _notes.isNotEmpty;
+  bool get isLoading => _isLoading;
+  String? get error => _error;
+
   Future<void> _loadNotes() async {
+    if (_isLoading) return;
+
+    _isLoading = true;
+    _error = null;
+    notifyListeners();
+
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final notesJson = prefs.getString(_storageKey);
-      if (notesJson != null) {
-        final List<dynamic> decoded = jsonDecode(notesJson);
-        _notes = decoded.map((json) => Note.fromJson(json)).toList();
-        // Sort by most recent first
-        _notes.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-        notifyListeners();
-      }
+      _notes = await _dbService.fetchNotes();
+      // Notes are already sorted by most recent first from the database
     } catch (e) {
+      _error = e.toString();
       debugPrint('Error loading notes: $e');
+      _notes = [];
+    } finally {
+      _isLoading = false;
+      notifyListeners();
     }
   }
 
-  Future<void> _saveNotes() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final notesJson = jsonEncode(_notes.map((note) => note.toJson()).toList());
-      await prefs.setString(_storageKey, notesJson);
-    } catch (e) {
-      debugPrint('Error saving notes: $e');
-    }
+  /// Reload notes from database
+  Future<void> refreshNotes() async {
+    await _loadNotes();
   }
 
   Future<void> addNote({
     required String title,
     required String content,
   }) async {
-    final note = Note(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      title: title,
-      content: content,
-      createdAt: DateTime.now(),
-    );
-    _notes.insert(0, note); // Add to beginning (most recent first)
-    notifyListeners();
-    await _saveNotes();
+    try {
+      final note = Note(
+        title: title,
+        content: content,
+      );
+      
+      final createdNote = await _dbService.createNote(note);
+      _notes.insert(0, createdNote); // Add to beginning (most recent first)
+      notifyListeners();
+    } catch (e) {
+      _error = e.toString();
+      debugPrint('Error adding note: $e');
+      notifyListeners();
+      rethrow;
+    }
   }
 
   Future<void> deleteNote(String id) async {
-    _notes.removeWhere((note) => note.id == id);
-    notifyListeners();
-    await _saveNotes();
+    try {
+      await _dbService.deleteNote(id);
+      _notes.removeWhere((note) => note.id == id);
+      notifyListeners();
+    } catch (e) {
+      _error = e.toString();
+      debugPrint('Error deleting note: $e');
+      notifyListeners();
+      rethrow;
+    }
   }
 
   Future<void> updateNote({
@@ -67,14 +81,22 @@ class NotesProvider with ChangeNotifier {
     required String title,
     required String content,
   }) async {
-    final index = _notes.indexWhere((note) => note.id == id);
-    if (index != -1) {
-      _notes[index] = _notes[index].copyWith(
-        title: title,
-        content: content,
-      );
+    try {
+      final index = _notes.indexWhere((note) => note.id == id);
+      if (index != -1) {
+        final updatedNote = _notes[index].copyWith(
+          title: title,
+          content: content,
+        );
+        await _dbService.updateNote(updatedNote);
+        _notes[index] = updatedNote;
+        notifyListeners();
+      }
+    } catch (e) {
+      _error = e.toString();
+      debugPrint('Error updating note: $e');
       notifyListeners();
-      await _saveNotes();
+      rethrow;
     }
   }
 
@@ -86,4 +108,3 @@ class NotesProvider with ChangeNotifier {
     }
   }
 }
-

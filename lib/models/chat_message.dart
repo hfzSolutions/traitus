@@ -1,3 +1,7 @@
+import 'package:uuid/uuid.dart';
+
+const _uuid = Uuid();
+
 enum ChatRole { user, assistant, system }
 
 class ChatMessage {
@@ -7,15 +11,17 @@ class ChatMessage {
     DateTime? createdAt,
     this.isPending = false,
     this.hasError = false,
+    this.model,
     String? id,
   })  : createdAt = createdAt ?? DateTime.now(),
-        id = id ?? DateTime.now().millisecondsSinceEpoch.toString();
+        id = id ?? _uuid.v4();
 
   final ChatRole role;
   final String content;
   final DateTime createdAt;
   final bool isPending;
   final bool hasError;
+  final String? model;
   final String id;
 
   ChatMessage copyWith({
@@ -24,6 +30,7 @@ class ChatMessage {
     DateTime? createdAt,
     bool? isPending,
     bool? hasError,
+    String? model,
     String? id,
   }) {
     return ChatMessage(
@@ -32,6 +39,7 @@ class ChatMessage {
       createdAt: createdAt ?? this.createdAt,
       isPending: isPending ?? this.isPending,
       hasError: hasError ?? this.hasError,
+      model: model ?? this.model,
       id: id ?? this.id,
     );
   }
