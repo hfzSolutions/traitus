@@ -8,6 +8,7 @@ import 'package:traitus/providers/theme_provider.dart';
 import 'package:traitus/services/supabase_service.dart';
 import 'package:traitus/ui/auth_page.dart';
 import 'package:traitus/ui/home_page.dart';
+import 'package:traitus/ui/onboarding_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -68,12 +69,63 @@ class AuthCheckPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<AuthProvider>(
       builder: (context, authProvider, _) {
-        if (authProvider.isAuthenticated) {
-          return const HomePage();
-        } else {
+        // Show loading screen while initializing (fetching user profile)
+        if (authProvider.isInitializing) {
+          return const _LoadingScreen();
+        }
+        
+        // Not authenticated - show auth page
+        if (!authProvider.isAuthenticated) {
           return const AuthPage();
         }
+        
+        // Check if user needs to complete onboarding
+        if (authProvider.needsOnboarding) {
+          return const OnboardingPage();
+        }
+        
+        // All good - show home page
+        return const HomePage();
       },
+    );
+  }
+}
+
+/// Loading/Splash screen shown while checking auth state
+class _LoadingScreen extends StatelessWidget {
+  const _LoadingScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    
+    return Scaffold(
+      backgroundColor: theme.colorScheme.surface,
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // App logo or icon
+            Icon(
+              Icons.chat_bubble,
+              size: 80,
+              color: theme.colorScheme.primary,
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Traitus AI',
+              style: theme.textTheme.headlineMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: theme.colorScheme.primary,
+              ),
+            ),
+            const SizedBox(height: 48),
+            CircularProgressIndicator(
+              color: theme.colorScheme.primary,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -1,3 +1,4 @@
+import 'package:traitus/config/default_ai_config.dart';
 import 'package:traitus/models/ai_chat.dart';
 import 'package:traitus/models/chat_message.dart';
 import 'package:traitus/models/note.dart';
@@ -307,6 +308,69 @@ class DatabaseService {
           'avatar_url': avatarUrl,
           'updated_at': DateTime.now().toIso8601String(),
         });
+  }
+
+  /// Complete onboarding for user
+  Future<UserProfile> completeOnboarding({
+    required String displayName,
+    DateTime? dateOfBirth,
+    String? preferredLanguage,
+    String? avatarUrl,
+    required List<String> preferences,
+    required List<String> selectedChatIds,
+  }) async {
+    final userId = SupabaseService.client.auth.currentUser?.id;
+    if (userId == null) throw Exception('User not authenticated');
+
+    // Update user profile with onboarding completion
+    final profileData = {
+      'id': userId,
+      'display_name': displayName,
+      if (dateOfBirth != null) 
+        'date_of_birth': dateOfBirth.toIso8601String().split('T')[0], // Date only
+      if (preferredLanguage != null) 
+        'preferred_language': preferredLanguage,
+      if (avatarUrl != null) 
+        'avatar_url': avatarUrl,
+      'onboarding_completed': true,
+      'preferences': preferences,
+      'updated_at': DateTime.now().toIso8601String(),
+    };
+
+    final response = await _client
+        .from('user_profiles')
+        .upsert(profileData)
+        .select()
+        .single();
+
+    final profile = UserProfile.fromJson(response);
+
+    // Create selected AI chats
+    if (selectedChatIds.isNotEmpty) {
+      await _createSelectedChats(selectedChatIds);
+    }
+
+    return profile;
+  }
+
+  /// Create selected AI chats from onboarding
+  Future<void> _createSelectedChats(List<String> selectedChatIds) async {
+    for (var chatId in selectedChatIds) {
+      final config = DefaultAIConfig.getChatConfig(chatId);
+      if (config != null) {
+        try {
+          await createChat(AiChat(
+            name: config['name'] as String,
+            description: config['description'] as String,
+            model: config['model'] as String,
+            avatarUrl: config['avatar'] as String,
+          ));
+        } catch (e) {
+          print('Error creating chat $chatId: $e');
+          // Continue even if one chat fails
+        }
+      }
+    }
   }
 
   // ========== HELPERS ==========

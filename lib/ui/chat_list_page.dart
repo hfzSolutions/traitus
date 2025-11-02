@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:provider/provider.dart';
-import 'package:image_picker/image_picker.dart';
-import 'dart:io';
 import 'package:traitus/models/ai_chat.dart';
 import 'package:traitus/providers/chat_provider.dart';
 import 'package:traitus/providers/chats_list_provider.dart';
 import 'package:traitus/ui/chat_page.dart';
-import 'package:traitus/services/storage_service.dart';
+import 'package:traitus/ui/notes_page.dart';
+import 'package:traitus/ui/widgets/chat_form_modal.dart';
 
 class ChatListPage extends StatelessWidget {
   const ChatListPage({super.key, this.isInTabView = false});
@@ -43,6 +42,20 @@ class ChatListPage extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Traitus AI'),
         automaticallyImplyLeading: !isInTabView,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.bookmark_outline),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const NotesPage(isInTabView: false),
+                ),
+              );
+            },
+            tooltip: 'Saved Notes',
+          ),
+        ],
       ),
       body: Consumer<ChatsListProvider>(
         builder: (context, chatsProvider, _) {
@@ -123,7 +136,7 @@ class ChatListPage extends StatelessWidget {
                             create: (_) => ChatProvider(
                               chatId: chat.id,
                               model: chat.model,
-                              systemPrompt: chat.description,
+                              systemPrompt: chat.getEnhancedSystemPrompt(),
                             ),
                             child: ChatPage(chatId: chat.id),
                           ),
@@ -150,7 +163,48 @@ class ChatListPage extends StatelessWidget {
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (context) => const _CreateChatModal(),
+      builder: (context) => ChatFormModal(
+        chat: null,
+        isCreating: true,
+        onSave: ({
+          required String name,
+          required String description,
+          String? avatarUrl,
+          required String responseTone,
+          required String responseLength,
+          required String writingStyle,
+          required bool useEmojis,
+        }) async {
+          final model = dotenv.env['OPENROUTER_MODEL'];
+          if (model == null || model.isEmpty) {
+            throw Exception('OPENROUTER_MODEL not configured');
+          }
+
+          final newChat = AiChat(
+            name: name,
+            description: description,
+            model: model,
+            avatarUrl: avatarUrl,
+            responseTone: responseTone,
+            responseLength: responseLength,
+            writingStyle: writingStyle,
+            useEmojis: useEmojis,
+          );
+
+          if (context.mounted) {
+            await context.read<ChatsListProvider>().addChat(newChat);
+            
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('${newChat.name} created!'),
+                  duration: const Duration(seconds: 2),
+                ),
+              );
+            }
+          }
+        },
+      ),
     );
   }
 }
@@ -165,7 +219,7 @@ class _SectionHeader extends StatelessWidget {
     final theme = Theme.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: theme.colorScheme.surfaceVariant.withOpacity(0.3),
+      color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
       child: Row(
         children: [
           Text(
@@ -258,64 +312,48 @@ class _ChatListItem extends StatelessWidget {
         ),
         child: Row(
           children: [
-            // Drag handle - separate from InkWell to avoid gesture conflicts
-            Container(
-              color: Colors.transparent,
-              child: ReorderableDragStartListener(
-                index: chatsProvider.chats.indexOf(chat),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 24),
-                  child: Tooltip(
-                    message: 'Hold to drag and reorder',
-                    child: Icon(
-                      Icons.drag_handle,
-                      color: theme.colorScheme.onSurface.withOpacity(0.4),
-                      size: 24,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            // Rest of the chat item with tap and long press
+            // Chat item - tappable, no drag conflict
             Expanded(
               child: InkWell(
                 onTap: onTap,
-                onLongPress: () => _showEditChatDialog(context, chat, chatsProvider),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
                   child: Row(
                     children: [
-                      // Avatar
-                      Container(
-                        width: 56,
-                        height: 56,
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.primaryContainer,
-                          shape: BoxShape.circle,
-                        ),
-                        child: chat.avatarUrl != null && chat.avatarUrl!.isNotEmpty
-                            ? ClipOval(
-                                child: Image.network(
-                                  chat.avatarUrl!,
-                                  width: 56,
-                                  height: 56,
-                                  fit: BoxFit.cover,
-                                  cacheWidth: 112,
-                                  cacheHeight: 112,
-                                  errorBuilder: (context, error, stackTrace) {
-                                    return Icon(
-                                      Icons.smart_toy_outlined,
-                                      size: 28,
-                                      color: theme.colorScheme.onPrimaryContainer,
-                                    );
-                                  },
+                      // Avatar - serves as drag handle
+                      ReorderableDragStartListener(
+                        index: chatsProvider.chats.indexOf(chat),
+                        child: Container(
+                          width: 56,
+                          height: 56,
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.primaryContainer,
+                            shape: BoxShape.circle,
+                          ),
+                          child: chat.avatarUrl != null && chat.avatarUrl!.isNotEmpty
+                              ? ClipOval(
+                                  child: Image.network(
+                                    chat.avatarUrl!,
+                                    width: 56,
+                                    height: 56,
+                                    fit: BoxFit.cover,
+                                    cacheWidth: 112,
+                                    cacheHeight: 112,
+                                    errorBuilder: (context, error, stackTrace) {
+                                      return Icon(
+                                        Icons.smart_toy_outlined,
+                                        size: 28,
+                                        color: theme.colorScheme.onPrimaryContainer,
+                                      );
+                                    },
+                                  ),
+                                )
+                              : Icon(
+                                  Icons.smart_toy_outlined,
+                                  size: 28,
+                                  color: theme.colorScheme.onPrimaryContainer,
                                 ),
-                              )
-                            : Icon(
-                                Icons.smart_toy_outlined,
-                                size: 28,
-                                color: theme.colorScheme.onPrimaryContainer,
-                              ),
+                        ),
                       ),
                       const SizedBox(width: 12),
                       // Chat info
@@ -399,629 +437,4 @@ class _ChatListItem extends StatelessWidget {
     );
   }
 
-  void _showEditChatDialog(BuildContext context, AiChat chat, ChatsListProvider chatsProvider) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) => _EditChatModal(chat: chat),
-    );
-  }
 }
-
-class _EditChatModal extends StatefulWidget {
-  const _EditChatModal({required this.chat});
-
-  final AiChat chat;
-
-  @override
-  State<_EditChatModal> createState() => _EditChatModalState();
-}
-
-class _EditChatModalState extends State<_EditChatModal> {
-  final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _nameController;
-  late final TextEditingController _descriptionController;
-  final _imagePicker = ImagePicker();
-  final _storageService = StorageService();
-  String? _selectedImagePath;
-  bool _isUploading = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _nameController = TextEditingController(text: widget.chat.name);
-    _descriptionController = TextEditingController(text: widget.chat.description);
-  }
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    _descriptionController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _pickImage() async {
-    try {
-      final XFile? image = await _imagePicker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 512,
-        maxHeight: 512,
-        imageQuality: 85,
-      );
-
-      if (image != null) {
-        setState(() {
-          _selectedImagePath = image.path;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to pick image: $e'),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _saveChanges() async {
-    if (_formKey.currentState!.validate()) {
-      setState(() {
-        _isUploading = true;
-      });
-
-      try {
-        String? avatarUrl = widget.chat.avatarUrl;
-
-        // Upload new avatar if selected
-        if (_selectedImagePath != null) {
-          avatarUrl = await _storageService.updateAvatar(
-            _selectedImagePath!,
-            widget.chat.id,
-            widget.chat.avatarUrl,
-          );
-        }
-
-        final updatedChat = widget.chat.copyWith(
-          name: _nameController.text.trim(),
-          description: _descriptionController.text.trim(),
-          avatarUrl: avatarUrl,
-        );
-
-        if (mounted) {
-          context.read<ChatsListProvider>().updateChat(updatedChat);
-          Navigator.pop(context);
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('AI settings updated!'),
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Failed to update: $e'),
-              duration: const Duration(seconds: 3),
-            ),
-          );
-        }
-      } finally {
-        if (mounted) {
-          setState(() {
-            _isUploading = false;
-          });
-        }
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final mediaQuery = MediaQuery.of(context);
-
-    return Padding(
-      padding: EdgeInsets.only(
-        bottom: mediaQuery.viewInsets.bottom,
-      ),
-      child: Container(
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surface,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Handle bar
-            Container(
-              margin: const EdgeInsets.only(top: 12),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: theme.colorScheme.onSurfaceVariant.withOpacity(0.4),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            // Title
-            Padding(
-              padding: const EdgeInsets.all(20),
-              child: Row(
-                children: [
-                  Icon(Icons.edit_outlined, color: theme.colorScheme.primary, size: 28),
-                  const SizedBox(width: 12),
-                  Text(
-                    'Edit AI Settings',
-                    style: theme.textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            // Form content
-            Padding(
-              padding: const EdgeInsets.all(20),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // Avatar picker
-                    Center(
-                      child: GestureDetector(
-                        onTap: _isUploading ? null : _pickImage,
-                        child: Stack(
-                          children: [
-                            Container(
-                              width: 100,
-                              height: 100,
-                              decoration: BoxDecoration(
-                                color: theme.colorScheme.primaryContainer,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: theme.colorScheme.primary,
-                                  width: 2,
-                                ),
-                              ),
-                              child: _selectedImagePath != null
-                                  ? ClipOval(
-                                      child: Image.file(
-                                        File(_selectedImagePath!),
-                                        fit: BoxFit.cover,
-                                        width: 100,
-                                        height: 100,
-                                      ),
-                                    )
-                                  : (widget.chat.avatarUrl != null && widget.chat.avatarUrl!.isNotEmpty)
-                                      ? ClipOval(
-                                          child: Image.network(
-                                            widget.chat.avatarUrl!,
-                                            fit: BoxFit.cover,
-                                            width: 100,
-                                            height: 100,
-                                            errorBuilder: (context, error, stackTrace) {
-                                              return Icon(
-                                                Icons.smart_toy_outlined,
-                                                size: 48,
-                                                color: theme.colorScheme.onPrimaryContainer,
-                                              );
-                                            },
-                                          ),
-                                        )
-                                      : Icon(
-                                          Icons.smart_toy_outlined,
-                                          size: 48,
-                                          color: theme.colorScheme.onPrimaryContainer,
-                                        ),
-                            ),
-                            Positioned(
-                              bottom: 0,
-                              right: 0,
-                              child: Container(
-                                padding: const EdgeInsets.all(6),
-                                decoration: BoxDecoration(
-                                  color: theme.colorScheme.primary,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Icon(
-                                  Icons.camera_alt,
-                                  size: 20,
-                                  color: theme.colorScheme.onPrimary,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Center(
-                      child: Text(
-                        'Tap to change avatar',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurface.withOpacity(0.6),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    TextFormField(
-                      controller: _nameController,
-                      decoration: const InputDecoration(
-                        labelText: 'AI Name',
-                        hintText: 'e.g., Code Assistant, Writing Helper',
-                        prefixIcon: Icon(Icons.person_outline),
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Please enter a name';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _descriptionController,
-                      decoration: const InputDecoration(
-                        labelText: 'System Prompt',
-                        hintText: 'e.g., You are an expert coding assistant specialized in Flutter and Dart',
-                        helperText: 'Define the AI\'s personality and expertise',
-                        helperMaxLines: 2,
-                        prefixIcon: Icon(Icons.psychology_outlined),
-                        border: OutlineInputBorder(),
-                      ),
-                      maxLines: 4,
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Please enter a system prompt';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: _isUploading ? null : () => Navigator.pop(context),
-                            child: const Text('Cancel'),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          flex: 2,
-                          child: FilledButton.icon(
-                            onPressed: _isUploading ? null : _saveChanges,
-                            icon: _isUploading
-                                ? const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(Icons.check),
-                            label: Text(_isUploading ? 'Saving...' : 'Save Changes'),
-                          ),
-                        ),
-                      ],
-                    ),
-                    SizedBox(height: mediaQuery.padding.bottom + 8),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _CreateChatModal extends StatefulWidget {
-  const _CreateChatModal();
-
-  @override
-  State<_CreateChatModal> createState() => _CreateChatModalState();
-}
-
-class _CreateChatModalState extends State<_CreateChatModal> {
-  final _formKey = GlobalKey<FormState>();
-  final _nameController = TextEditingController();
-  final _descriptionController = TextEditingController();
-  final _imagePicker = ImagePicker();
-  final _storageService = StorageService();
-  String? _selectedImagePath;
-  bool _isCreating = false;
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    _descriptionController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _pickImage() async {
-    try {
-      final XFile? image = await _imagePicker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 512,
-        maxHeight: 512,
-        imageQuality: 85,
-      );
-
-      if (image != null) {
-        setState(() {
-          _selectedImagePath = image.path;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to pick image: $e'),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _createChat() async {
-    if (_formKey.currentState!.validate()) {
-      setState(() {
-        _isCreating = true;
-      });
-
-      try {
-        final model = dotenv.env['OPENROUTER_MODEL'];
-        if (model == null || model.isEmpty) {
-          throw Exception('OPENROUTER_MODEL not configured');
-        }
-
-        final newChat = AiChat(
-          name: _nameController.text.trim(),
-          description: _descriptionController.text.trim(),
-          model: model,
-        );
-
-        // Upload avatar if selected
-        String? avatarUrl;
-        if (_selectedImagePath != null) {
-          avatarUrl = await _storageService.uploadAvatar(
-            _selectedImagePath!,
-            newChat.id,
-          );
-        }
-
-        final chatWithAvatar = avatarUrl != null
-            ? newChat.copyWith(avatarUrl: avatarUrl)
-            : newChat;
-
-        if (mounted) {
-          context.read<ChatsListProvider>().addChat(chatWithAvatar);
-          Navigator.pop(context);
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('${chatWithAvatar.name} created!'),
-              duration: const Duration(seconds: 2),
-            ),
-          );
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Failed to create chat: $e'),
-              duration: const Duration(seconds: 3),
-            ),
-          );
-        }
-      } finally {
-        if (mounted) {
-          setState(() {
-            _isCreating = false;
-          });
-        }
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final mediaQuery = MediaQuery.of(context);
-
-    return Padding(
-      padding: EdgeInsets.only(
-        bottom: mediaQuery.viewInsets.bottom,
-      ),
-      child: Container(
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surface,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Handle bar
-            Container(
-              margin: const EdgeInsets.only(top: 12),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: theme.colorScheme.onSurfaceVariant.withOpacity(0.4),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            // Title
-            Padding(
-              padding: const EdgeInsets.all(20),
-              child: Row(
-                children: [
-                  Icon(Icons.smart_toy_outlined, color: theme.colorScheme.primary, size: 28),
-                  const SizedBox(width: 12),
-                  Text(
-                    'Create New AI Chat',
-                    style: theme.textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            // Form content
-            Padding(
-              padding: const EdgeInsets.all(20),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // Avatar picker
-                    Center(
-                      child: GestureDetector(
-                        onTap: _isCreating ? null : _pickImage,
-                        child: Stack(
-                          children: [
-                            Container(
-                              width: 100,
-                              height: 100,
-                              decoration: BoxDecoration(
-                                color: theme.colorScheme.primaryContainer,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: theme.colorScheme.primary,
-                                  width: 2,
-                                ),
-                              ),
-                              child: _selectedImagePath != null
-                                  ? ClipOval(
-                                      child: Image.file(
-                                        File(_selectedImagePath!),
-                                        fit: BoxFit.cover,
-                                        width: 100,
-                                        height: 100,
-                                      ),
-                                    )
-                                  : Icon(
-                                      Icons.smart_toy_outlined,
-                                      size: 48,
-                                      color: theme.colorScheme.onPrimaryContainer,
-                                    ),
-                            ),
-                            Positioned(
-                              bottom: 0,
-                              right: 0,
-                              child: Container(
-                                padding: const EdgeInsets.all(6),
-                                decoration: BoxDecoration(
-                                  color: theme.colorScheme.primary,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Icon(
-                                  Icons.camera_alt,
-                                  size: 20,
-                                  color: theme.colorScheme.onPrimary,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Center(
-                      child: Text(
-                        'Tap to add avatar (optional)',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurface.withOpacity(0.6),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    TextFormField(
-                      controller: _nameController,
-                      autofocus: true,
-                      decoration: const InputDecoration(
-                        labelText: 'AI Name',
-                        hintText: 'e.g., Code Assistant, Writing Helper',
-                        prefixIcon: Icon(Icons.person_outline),
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Please enter a name';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _descriptionController,
-                      decoration: const InputDecoration(
-                        labelText: 'System Prompt',
-                        hintText: 'e.g., You are an expert coding assistant specialized in Flutter and Dart',
-                        helperText: 'Define the AI\'s personality and expertise',
-                        helperMaxLines: 2,
-                        prefixIcon: Icon(Icons.psychology_outlined),
-                        border: OutlineInputBorder(),
-                      ),
-                      maxLines: 4,
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Please enter a system prompt';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: _isCreating ? null : () => Navigator.pop(context),
-                            child: const Text('Cancel'),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          flex: 2,
-                          child: FilledButton.icon(
-                            onPressed: _isCreating ? null : _createChat,
-                            icon: _isCreating
-                                ? const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(Icons.add),
-                            label: Text(_isCreating ? 'Creating...' : 'Create AI'),
-                          ),
-                        ),
-                      ],
-                    ),
-                    SizedBox(height: mediaQuery.padding.bottom + 8),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:traitus/ui/chat_list_page.dart';
-import 'package:traitus/ui/notes_page.dart';
 import 'package:traitus/ui/settings_page.dart';
 
 class HomePage extends StatefulWidget {
@@ -16,7 +15,6 @@ class _HomePageState extends State<HomePage> {
   // Pages for each tab
   static const List<Widget> _pages = [
     ChatListPage(isInTabView: true),
-    NotesPage(isInTabView: true),
     SettingsPage(isInTabView: true),
   ];
 
@@ -45,11 +43,6 @@ class _HomePageState extends State<HomePage> {
             icon: Icon(Icons.chat_bubble_outline),
             activeIcon: Icon(Icons.chat_bubble),
             label: 'Chats',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.bookmark_outline),
-            activeIcon: Icon(Icons.bookmark),
-            label: 'Saved',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.person_outline),
