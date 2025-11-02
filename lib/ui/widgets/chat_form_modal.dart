@@ -1,0 +1,546 @@
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:traitus/models/ai_chat.dart';
+import 'package:traitus/services/storage_service.dart';
+
+/// Reusable modal for creating or editing AI chats
+/// 
+/// Handles:
+/// - Chat name and system prompt
+/// - Avatar upload
+/// - Response style settings (collapsible)
+/// - Scrollable content to prevent overflow
+class ChatFormModal extends StatefulWidget {
+  const ChatFormModal({
+    super.key,
+    this.chat,
+    required this.onSave,
+    this.isCreating = false,
+  });
+
+  /// Existing chat to edit (null for create mode)
+  final AiChat? chat;
+  
+  /// Callback when save button is pressed
+  /// Returns the updated/new chat data
+  final Future<void> Function({
+    required String name,
+    required String description,
+    String? avatarUrl,
+    required String responseTone,
+    required String responseLength,
+    required String writingStyle,
+    required bool useEmojis,
+  }) onSave;
+  
+  /// Whether this is creating a new chat (true) or editing (false)
+  final bool isCreating;
+
+  @override
+  State<ChatFormModal> createState() => _ChatFormModalState();
+}
+
+class _ChatFormModalState extends State<ChatFormModal> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _nameController;
+  late final TextEditingController _descriptionController;
+  final _imagePicker = ImagePicker();
+  final _storageService = StorageService();
+  
+  String? _selectedImagePath;
+  bool _isSaving = false;
+  bool _showAdvancedSettings = false;
+  
+  // Response style preferences
+  late String _selectedTone;
+  late String _selectedLength;
+  late String _selectedStyle;
+  late bool _useEmojis;
+
+  @override
+  void initState() {
+    super.initState();
+    final chat = widget.chat;
+    
+    _nameController = TextEditingController(text: chat?.name ?? '');
+    _descriptionController = TextEditingController(text: chat?.description ?? '');
+    
+    // Initialize response style preferences
+    _selectedTone = chat?.responseTone ?? 'friendly';
+    _selectedLength = chat?.responseLength ?? 'balanced';
+    _selectedStyle = chat?.writingStyle ?? 'simple';
+    _useEmojis = chat?.useEmojis ?? false;
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _descriptionController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickImage() async {
+    try {
+      final XFile? image = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 512,
+        maxHeight: 512,
+        imageQuality: 85,
+      );
+
+      if (image != null) {
+        setState(() {
+          _selectedImagePath = image.path;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to pick image: $e'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleSave() async {
+    if (_formKey.currentState!.validate()) {
+      setState(() {
+        _isSaving = true;
+      });
+
+      try {
+        String? avatarUrl = widget.chat?.avatarUrl;
+
+        // Upload new avatar if selected
+        if (_selectedImagePath != null) {
+          if (widget.isCreating) {
+            // For new chats, we'll need a temporary ID
+            avatarUrl = await _storageService.uploadAvatar(
+              _selectedImagePath!,
+              DateTime.now().millisecondsSinceEpoch.toString(),
+            );
+          } else {
+            avatarUrl = await _storageService.updateAvatar(
+              _selectedImagePath!,
+              widget.chat!.id,
+              widget.chat!.avatarUrl,
+            );
+          }
+        }
+
+        await widget.onSave(
+          name: _nameController.text.trim(),
+          description: _descriptionController.text.trim(),
+          avatarUrl: avatarUrl,
+          responseTone: _selectedTone,
+          responseLength: _selectedLength,
+          writingStyle: _selectedStyle,
+          useEmojis: _useEmojis,
+        );
+
+        if (mounted) {
+          Navigator.pop(context);
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to save: $e'),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isSaving = false;
+          });
+        }
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final mediaQuery = MediaQuery.of(context);
+    final isCreating = widget.isCreating;
+
+    return Padding(
+      padding: EdgeInsets.only(
+        bottom: mediaQuery.viewInsets.bottom,
+      ),
+      child: Container(
+        constraints: BoxConstraints(
+          maxHeight: mediaQuery.size.height * 0.9,
+        ),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle bar
+            Container(
+              margin: const EdgeInsets.only(top: 12),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: theme.colorScheme.onSurfaceVariant.withOpacity(0.4),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            
+            // Title
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                children: [
+                  Icon(
+                    isCreating ? Icons.smart_toy_outlined : Icons.edit_outlined,
+                    color: theme.colorScheme.primary,
+                    size: 28,
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    isCreating ? 'Create New AI Chat' : 'Edit Chat Settings',
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            
+            // Scrollable Form content
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Avatar picker
+                      Center(
+                        child: GestureDetector(
+                          onTap: _isSaving ? null : _pickImage,
+                          child: Stack(
+                            children: [
+                              Container(
+                                width: 100,
+                                height: 100,
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.primaryContainer,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: theme.colorScheme.primary,
+                                    width: 2,
+                                  ),
+                                ),
+                                child: _selectedImagePath != null
+                                    ? ClipOval(
+                                        child: Image.file(
+                                          File(_selectedImagePath!),
+                                          fit: BoxFit.cover,
+                                          width: 100,
+                                          height: 100,
+                                        ),
+                                      )
+                                    : (widget.chat?.avatarUrl != null && widget.chat!.avatarUrl!.isNotEmpty)
+                                        ? ClipOval(
+                                            child: Image.network(
+                                              widget.chat!.avatarUrl!,
+                                              fit: BoxFit.cover,
+                                              width: 100,
+                                              height: 100,
+                                              errorBuilder: (context, error, stackTrace) {
+                                                return Icon(
+                                                  Icons.smart_toy_outlined,
+                                                  size: 48,
+                                                  color: theme.colorScheme.onPrimaryContainer,
+                                                );
+                                              },
+                                            ),
+                                          )
+                                        : Icon(
+                                            Icons.smart_toy_outlined,
+                                            size: 48,
+                                            color: theme.colorScheme.onPrimaryContainer,
+                                          ),
+                              ),
+                              Positioned(
+                                bottom: 0,
+                                right: 0,
+                                child: Container(
+                                  padding: const EdgeInsets.all(6),
+                                  decoration: BoxDecoration(
+                                    color: theme.colorScheme.primary,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Icon(
+                                    Icons.camera_alt,
+                                    size: 20,
+                                    color: theme.colorScheme.onPrimary,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Center(
+                        child: Text(
+                          'Tap to change avatar',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurface.withOpacity(0.6),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      
+                      // Chat Name
+                      TextFormField(
+                        controller: _nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Chat Name',
+                          hintText: 'e.g., Code Assistant, Writing Helper',
+                          prefixIcon: Icon(Icons.person_outline),
+                          border: OutlineInputBorder(),
+                        ),
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Please enter a name';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      
+                      // System Prompt
+                      TextFormField(
+                        controller: _descriptionController,
+                        decoration: const InputDecoration(
+                          labelText: 'System Prompt',
+                          hintText: 'e.g., You are an expert coding assistant specialized in Flutter and Dart',
+                          helperText: 'Define the AI\'s personality and expertise',
+                          helperMaxLines: 2,
+                          prefixIcon: Icon(Icons.psychology_outlined),
+                          border: OutlineInputBorder(),
+                        ),
+                        maxLines: 4,
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Please enter a system prompt';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 24),
+                      
+                      // Advanced Settings Toggle
+                      InkWell(
+                        onTap: () {
+                          setState(() {
+                            _showAdvancedSettings = !_showAdvancedSettings;
+                          });
+                        },
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.5),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: theme.colorScheme.outlineVariant.withOpacity(0.5),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.tune_outlined,
+                                color: theme.colorScheme.primary,
+                                size: 22,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Response Style Settings',
+                                      style: theme.textTheme.titleSmall?.copyWith(
+                                        fontWeight: FontWeight.w600,
+                                        color: theme.colorScheme.onSurface,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      'Customize tone, length, and style',
+                                      style: theme.textTheme.bodySmall?.copyWith(
+                                        color: theme.colorScheme.onSurface.withOpacity(0.6),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Icon(
+                                _showAdvancedSettings 
+                                    ? Icons.keyboard_arrow_up 
+                                    : Icons.keyboard_arrow_down,
+                                color: theme.colorScheme.onSurface.withOpacity(0.6),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      
+                      // Expandable Response Style Section
+                      if (_showAdvancedSettings) ...[
+                        const SizedBox(height: 16),
+                        
+                        // Response Tone
+                        DropdownButtonFormField<String>(
+                          initialValue: _selectedTone,
+                          decoration: const InputDecoration(
+                            labelText: 'Tone',
+                            prefixIcon: Icon(Icons.mood_outlined),
+                            border: OutlineInputBorder(),
+                          ),
+                          items: const [
+                            DropdownMenuItem(value: 'friendly', child: Text('Friendly & Warm')),
+                            DropdownMenuItem(value: 'professional', child: Text('Professional')),
+                            DropdownMenuItem(value: 'casual', child: Text('Casual & Relaxed')),
+                            DropdownMenuItem(value: 'formal', child: Text('Formal')),
+                            DropdownMenuItem(value: 'enthusiastic', child: Text('Enthusiastic')),
+                          ],
+                          onChanged: (value) {
+                            if (value != null) {
+                              setState(() {
+                                _selectedTone = value;
+                              });
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        
+                        // Response Length
+                        DropdownButtonFormField<String>(
+                          initialValue: _selectedLength,
+                          decoration: const InputDecoration(
+                            labelText: 'Response Length',
+                            prefixIcon: Icon(Icons.short_text_outlined),
+                            border: OutlineInputBorder(),
+                          ),
+                          items: const [
+                            DropdownMenuItem(value: 'brief', child: Text('Brief - Quick answers')),
+                            DropdownMenuItem(value: 'balanced', child: Text('Balanced - Moderate detail')),
+                            DropdownMenuItem(value: 'detailed', child: Text('Detailed - Comprehensive')),
+                          ],
+                          onChanged: (value) {
+                            if (value != null) {
+                              setState(() {
+                                _selectedLength = value;
+                              });
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        
+                        // Writing Style
+                        DropdownButtonFormField<String>(
+                          initialValue: _selectedStyle,
+                          decoration: const InputDecoration(
+                            labelText: 'Writing Style',
+                            prefixIcon: Icon(Icons.edit_note_outlined),
+                            border: OutlineInputBorder(),
+                          ),
+                          items: const [
+                            DropdownMenuItem(value: 'simple', child: Text('Simple - Easy to understand')),
+                            DropdownMenuItem(value: 'technical', child: Text('Technical - Use terminology')),
+                            DropdownMenuItem(value: 'creative', child: Text('Creative - Engaging language')),
+                            DropdownMenuItem(value: 'analytical', child: Text('Analytical - Structured')),
+                          ],
+                          onChanged: (value) {
+                            if (value != null) {
+                              setState(() {
+                                _selectedStyle = value;
+                              });
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        
+                        // Use Emojis Switch
+                        SwitchListTile(
+                          value: _useEmojis,
+                          onChanged: (value) {
+                            setState(() {
+                              _useEmojis = value;
+                            });
+                          },
+                          title: const Text('Use Emojis'),
+                          subtitle: const Text('Allow AI to use emojis in responses'),
+                          secondary: Icon(
+                            _useEmojis ? Icons.emoji_emotions : Icons.emoji_emotions_outlined,
+                            color: theme.colorScheme.primary,
+                          ),
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ],
+                      
+                      const SizedBox(height: 20),
+                      
+                      // Action Buttons
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: _isSaving ? null : () => Navigator.pop(context),
+                              child: const Text('Cancel'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            flex: 2,
+                            child: FilledButton.icon(
+                              onPressed: _isSaving ? null : _handleSave,
+                              icon: _isSaving
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : Icon(isCreating ? Icons.add : Icons.check),
+                              label: Text(
+                                _isSaving 
+                                    ? (isCreating ? 'Creating...' : 'Saving...')
+                                    : (isCreating ? 'Create AI' : 'Save Changes'),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: mediaQuery.padding.bottom + 8),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+

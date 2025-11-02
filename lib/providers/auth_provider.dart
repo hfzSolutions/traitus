@@ -10,6 +10,7 @@ class AuthProvider extends ChangeNotifier {
   User? _user;
   UserProfile? _userProfile;
   bool _isLoading = false;
+  bool _isInitializing = true; // Track initial profile load
   String? _error;
 
   AuthProvider(this._supabaseService) {
@@ -17,6 +18,8 @@ class AuthProvider extends ChangeNotifier {
     _listenToAuthChanges();
     if (_user != null) {
       _loadUserProfile();
+    } else {
+      _isInitializing = false; // No user, no need to load profile
     }
   }
 
@@ -24,6 +27,7 @@ class AuthProvider extends ChangeNotifier {
   UserProfile? get userProfile => _userProfile;
   bool get isAuthenticated => _user != null;
   bool get isLoading => _isLoading;
+  bool get isInitializing => _isInitializing; // Expose initializing state
   String? get error => _error;
 
   void _listenToAuthChanges() {
@@ -41,9 +45,11 @@ class AuthProvider extends ChangeNotifier {
   Future<void> _loadUserProfile() async {
     try {
       _userProfile = await _databaseService.fetchUserProfile();
-      notifyListeners();
     } catch (e) {
       print('Error loading user profile: $e');
+    } finally {
+      _isInitializing = false; // Always set to false when done
+      notifyListeners();
     }
   }
 
@@ -126,6 +132,41 @@ class AuthProvider extends ChangeNotifier {
       _error = e.toString();
       rethrow;
     }
+  }
+
+  Future<void> completeOnboarding({
+    required String displayName,
+    DateTime? dateOfBirth,
+    String? preferredLanguage,
+    String? avatarUrl,
+    required List<String> preferences,
+    required List<String> selectedChatIds,
+  }) async {
+    _isLoading = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      _userProfile = await _databaseService.completeOnboarding(
+        displayName: displayName,
+        dateOfBirth: dateOfBirth,
+        preferredLanguage: preferredLanguage,
+        avatarUrl: avatarUrl,
+        preferences: preferences,
+        selectedChatIds: selectedChatIds,
+      );
+    } catch (e) {
+      _error = e.toString();
+      rethrow;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  bool get needsOnboarding {
+    return _user != null && 
+           (_userProfile == null || !_userProfile!.onboardingCompleted);
   }
 
   Future<void> resetPassword(String email) async {

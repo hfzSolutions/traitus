@@ -1,0 +1,192 @@
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+
+/// Configuration for default AI assistants
+class DefaultAIConfig {
+  /// Get the model for a specific AI assistant type
+  static String getModel(String assistantType) {
+    final envKey = 'DEFAULT_MODEL_${assistantType.toUpperCase()}';
+    return dotenv.get(envKey, fallback: _getFallbackModel(assistantType));
+  }
+
+  /// Get fallback model if env variable is not set
+  static String _getFallbackModel(String assistantType) {
+    switch (assistantType) {
+      case 'coding':
+      case 'creative':
+      case 'research':
+      case 'business':
+        return dotenv.get('DEFAULT_MODEL_FREE', fallback: 'minimax/minimax-m2:free');
+      case 'productivity':
+      case 'learning':
+        return dotenv.get('DEFAULT_MODEL_PREMIUM', fallback: 'minimax/minimax-m2:free');
+      default:
+        return dotenv.get('DEFAULT_MODEL', fallback: 'minimax/minimax-m2:free');
+    }
+  }
+
+  /// Get all available AI chat configurations
+  static Map<String, Map<String, dynamic>> getAvailableAIChats() {
+    return {
+      'coding': {
+        'id': 'coding',
+        'name': 'Coding Assistant',
+        'description': 'Your programming companion for solving coding problems',
+        'model': getModel('coding'),
+        'avatar': '💻',
+        'preference': 'coding',
+      },
+      'creative': {
+        'id': 'creative',
+        'name': 'Creative Writer',
+        'description': 'Spark your creativity with story ideas and writing help',
+        'model': getModel('creative'),
+        'avatar': '✍️',
+        'preference': 'creative',
+      },
+      'research': {
+        'id': 'research',
+        'name': 'Research Assistant',
+        'description': 'Deep dive into topics and gather information',
+        'model': getModel('research'),
+        'avatar': '🔍',
+        'preference': 'research',
+      },
+      'productivity': {
+        'id': 'productivity',
+        'name': 'Productivity Coach',
+        'description': 'Optimize your workflow and time management',
+        'model': getModel('productivity'),
+        'avatar': '📈',
+        'preference': 'productivity',
+      },
+      'learning': {
+        'id': 'learning',
+        'name': 'Learning Tutor',
+        'description': 'Master new concepts with personalized explanations',
+        'model': getModel('learning'),
+        'avatar': '🎓',
+        'preference': 'learning',
+      },
+      'business': {
+        'id': 'business',
+        'name': 'Business Advisor',
+        'description': 'Strategic insights for your business decisions',
+        'model': getModel('business'),
+        'avatar': '💼',
+        'preference': 'business',
+      },
+    };
+  }
+
+  /// Get configuration for a specific chat by ID
+  static Map<String, dynamic>? getChatConfig(String chatId) {
+    final chats = getAvailableAIChats();
+    return chats[chatId];
+  }
+
+  /// Detect the AI category from chat name and description
+  static String? detectChatCategory(String name, String description) {
+    final lowerName = name.toLowerCase();
+    final lowerDesc = description.toLowerCase();
+    final chats = getAvailableAIChats();
+    
+    // Try to match by name or description keywords
+    for (final entry in chats.entries) {
+      final categoryId = entry.key;
+      final config = entry.value;
+      final configName = (config['name'] as String).toLowerCase();
+      final configDesc = (config['description'] as String).toLowerCase();
+      
+      // Check if name or description contains category keywords
+      if (lowerName.contains(configName) || 
+          lowerDesc.contains(configDesc) ||
+          lowerName.contains(categoryId) ||
+          lowerDesc.contains(categoryId)) {
+        return categoryId;
+      }
+    }
+    
+    // Fallback: try keyword matching
+    if (lowerName.contains('coding') || lowerName.contains('program') || 
+        lowerName.contains('code') || lowerDesc.contains('programming')) {
+      return 'coding';
+    }
+    if (lowerName.contains('creative') || lowerName.contains('write') || 
+        lowerName.contains('story') || lowerDesc.contains('writing')) {
+      return 'creative';
+    }
+    if (lowerName.contains('research') || lowerDesc.contains('research')) {
+      return 'research';
+    }
+    if (lowerName.contains('productivity') || lowerName.contains('time management') || 
+        lowerDesc.contains('productivity')) {
+      return 'productivity';
+    }
+    if (lowerName.contains('learning') || lowerName.contains('tutor') || 
+        lowerName.contains('teach') || lowerDesc.contains('learning')) {
+      return 'learning';
+    }
+    if (lowerName.contains('business') || lowerDesc.contains('business')) {
+      return 'business';
+    }
+    
+    return null;
+  }
+
+  /// Get example questions for a specific AI category
+  static List<String> getExampleQuestions(String? category) {
+    switch (category) {
+      case 'coding':
+        return [
+          'How do I fix a memory leak in JavaScript?',
+          'Explain async/await in Python',
+          'What\'s the best way to structure a REST API?',
+          'Help me debug this error',
+        ];
+      case 'creative':
+        return [
+          'Write a short story about a time traveler',
+          'Help me brainstorm creative writing prompts',
+          'Suggest plot ideas for a fantasy novel',
+          'How can I improve my character development?',
+        ];
+      case 'research':
+        return [
+          'Summarize the latest developments in AI',
+          'What are the main causes of climate change?',
+          'Explain quantum computing in simple terms',
+          'Find information about renewable energy',
+        ];
+      case 'productivity':
+        return [
+          'How can I improve my daily workflow?',
+          'Suggest time management techniques',
+          'Help me prioritize my tasks',
+          'What are effective productivity habits?',
+        ];
+      case 'learning':
+        return [
+          'Explain photosynthesis step by step',
+          'Help me understand calculus concepts',
+          'Teach me about the history of Rome',
+          'How does machine learning work?',
+        ];
+      case 'business':
+        return [
+          'How do I create a business plan?',
+          'What are effective marketing strategies?',
+          'Help me analyze market trends',
+          'Advice on scaling a startup',
+        ];
+      default:
+        // Generic questions that work for any AI
+        return [
+          'What can you help me with?',
+          'Tell me about your capabilities',
+          'How can I get started?',
+          'What would you recommend?',
+        ];
+    }
+  }
+}
+

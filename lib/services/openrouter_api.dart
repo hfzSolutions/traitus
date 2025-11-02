@@ -45,7 +45,7 @@ class OpenRouterApi {
     };
 
     final headers = <String, String>{
-      'Authorization': 'Bearer ${_apiKey}',
+      'Authorization': 'Bearer $_apiKey',
       'Content-Type': 'application/json',
       'HTTP-Referer': dotenv.env['OPENROUTER_SITE_URL'] ?? 'https://example.com',
       'X-Title': dotenv.env['OPENROUTER_APP_NAME'] ?? 'Traitus AI Chat',
