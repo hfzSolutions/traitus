@@ -3,6 +3,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:traitus/models/chat_message.dart';
 import 'package:traitus/services/openrouter_api.dart';
 import 'package:traitus/services/database_service.dart';
+import 'package:traitus/providers/chats_list_provider.dart';
 
 class ChatProvider extends ChangeNotifier {
   ChatProvider({
@@ -10,11 +11,13 @@ class ChatProvider extends ChangeNotifier {
     String? chatId, 
     String? model,
     String? systemPrompt,
+    ChatsListProvider? chatsListProvider, // Optional cache provider
   }) 
       : _api = api ?? OpenRouterApi(),
         _chatId = chatId ?? '',
         _model = model ?? dotenv.env['OPENROUTER_MODEL'] ?? '',
         _systemPrompt = systemPrompt ?? 'You are a helpful, concise AI assistant. Use markdown for structure.',
+        _chatsListProvider = chatsListProvider,
         _messages = <ChatMessage>[
           ChatMessage(
             role: ChatRole.system,
@@ -34,6 +37,7 @@ class ChatProvider extends ChangeNotifier {
   final String _chatId;
   final String _model;
   final String _systemPrompt;
+  final ChatsListProvider? _chatsListProvider; // For accessing message cache
 
   final List<ChatMessage> _messages;
 
@@ -58,19 +62,36 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Get total message count to determine if there are more messages
-      final totalCount = await _dbService.getMessageCount(_chatId);
+      // Try to use cached messages first (instant load!)
+      List<ChatMessage> loadedMessages = [];
+      int? totalCount;
       
-      // Load only the most recent messages initially
-      // We load in descending order and reverse to get the latest messages
-      final loadedMessages = await _dbService.fetchMessages(
-        _chatId,
-        limit: _messagesPerPage,
-        ascending: false,
-      );
+      if (_chatsListProvider != null) {
+        final cachedMessages = _chatsListProvider.getCachedMessages(_chatId);
+        final cachedCount = _chatsListProvider.getCachedMessageCount(_chatId);
+        
+        if (cachedMessages != null && cachedCount != null) {
+          // Use cached data - instant load!
+          debugPrint('Using cached messages for chat $_chatId (${cachedMessages.length} messages)');
+          loadedMessages = List.from(cachedMessages);
+          totalCount = cachedCount;
+        }
+      }
       
-      // Reverse to get chronological order (oldest to newest)
-      loadedMessages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      // If no cache available, load from database
+      if (loadedMessages.isEmpty) {
+        debugPrint('Loading messages from database for chat $_chatId');
+        totalCount = await _dbService.getMessageCount(_chatId);
+        
+        loadedMessages = await _dbService.fetchMessages(
+          _chatId,
+          limit: _messagesPerPage,
+          ascending: false,
+        );
+        
+        // Sort chronologically (oldest to newest)
+        loadedMessages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      }
       
       _messages
         ..clear()
@@ -87,7 +108,7 @@ class ChatProvider extends ChangeNotifier {
       // Determine if there are more messages to load
       // Don't count the system message
       final nonSystemMessages = _messages.where((m) => m.role != ChatRole.system).length;
-      _hasMoreMessages = nonSystemMessages < totalCount;
+      _hasMoreMessages = nonSystemMessages < (totalCount ?? 0);
       
     } catch (e) {
       debugPrint('Error loading messages: $e');
@@ -150,6 +171,10 @@ class ChatProvider extends ChangeNotifier {
     // Save user message to database
     try {
       await _dbService.createMessage(_chatId, userMessage);
+      // Add to cache if available
+      if (_chatsListProvider != null) {
+        _chatsListProvider.addMessageToCache(_chatId, userMessage);
+      }
     } catch (e) {
       debugPrint('Error saving user message: $e');
     }
@@ -185,6 +210,10 @@ class ChatProvider extends ChangeNotifier {
           // Save assistant message to database
           try {
             await _dbService.createMessage(_chatId, assistantMessage);
+            // Add to cache if available
+            if (_chatsListProvider != null) {
+              _chatsListProvider.addMessageToCache(_chatId, assistantMessage);
+            }
           } catch (e) {
             debugPrint('Error saving assistant message: $e');
           }

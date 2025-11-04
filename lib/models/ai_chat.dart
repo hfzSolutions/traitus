@@ -5,7 +5,8 @@ const _uuid = Uuid();
 class AiChat {
   final String id;
   final String name;
-  final String description;
+  final String shortDescription;  // User-facing description shown under AI name
+  final String systemPrompt;       // AI prompt (not shown to users)
   final String model;
   final String? lastMessage;
   final DateTime? lastMessageTime;
@@ -13,6 +14,8 @@ class AiChat {
   final bool isPinned;
   final int sortOrder;
   final String? avatarUrl;
+  final DateTime? lastReadAt;      // When user last viewed this chat
+  final int unreadCount;           // Computed locally, not stored in DB
   
   // Response style preferences
   final String responseTone;        // friendly, professional, casual, formal, enthusiastic
@@ -23,7 +26,8 @@ class AiChat {
   AiChat({
     String? id,
     required this.name,
-    required this.description,
+    required this.shortDescription,
+    required this.systemPrompt,
     required this.model,
     this.lastMessage,
     this.lastMessageTime,
@@ -35,12 +39,15 @@ class AiChat {
     this.responseLength = 'balanced',
     this.writingStyle = 'simple',
     this.useEmojis = false,
+    this.lastReadAt,
+    this.unreadCount = 0,
   })  : id = id ?? _uuid.v4(),
         createdAt = createdAt ?? DateTime.now();
 
   AiChat copyWith({
     String? name,
-    String? description,
+    String? shortDescription,
+    String? systemPrompt,
     String? model,
     String? lastMessage,
     DateTime? lastMessageTime,
@@ -51,11 +58,14 @@ class AiChat {
     String? responseLength,
     String? writingStyle,
     bool? useEmojis,
+    DateTime? lastReadAt,
+    int? unreadCount,
   }) {
     return AiChat(
       id: id,
       name: name ?? this.name,
-      description: description ?? this.description,
+      shortDescription: shortDescription ?? this.shortDescription,
+      systemPrompt: systemPrompt ?? this.systemPrompt,
       model: model ?? this.model,
       lastMessage: lastMessage ?? this.lastMessage,
       lastMessageTime: lastMessageTime ?? this.lastMessageTime,
@@ -67,6 +77,8 @@ class AiChat {
       responseLength: responseLength ?? this.responseLength,
       writingStyle: writingStyle ?? this.writingStyle,
       useEmojis: useEmojis ?? this.useEmojis,
+      lastReadAt: lastReadAt ?? this.lastReadAt,
+      unreadCount: unreadCount ?? this.unreadCount,
     );
   }
 
@@ -74,7 +86,8 @@ class AiChat {
     return {
       'id': id,
       'name': name,
-      'description': description,
+      'short_description': shortDescription,
+      'system_prompt': systemPrompt,
       'model': model,
       'last_message': lastMessage,
       'last_message_time': lastMessageTime?.toIso8601String(),
@@ -82,6 +95,7 @@ class AiChat {
       'is_pinned': isPinned,
       'sort_order': sortOrder,
       'avatar_url': avatarUrl,
+      'last_read_at': lastReadAt?.toIso8601String(),
       'response_tone': responseTone,
       'response_length': responseLength,
       'writing_style': writingStyle,
@@ -90,10 +104,17 @@ class AiChat {
   }
 
   factory AiChat.fromJson(Map<String, dynamic> json) {
+    // Backward compatibility: if system_prompt doesn't exist, use description as systemPrompt
+    // and short_description (or description) as shortDescription
+    final systemPrompt = json['system_prompt'] as String?;
+    final shortDesc = json['short_description'] as String?;
+    final oldDescription = json['description'] as String?;
+    
     return AiChat(
       id: json['id'] as String,
       name: json['name'] as String,
-      description: json['description'] as String,
+      shortDescription: shortDesc ?? oldDescription ?? '',
+      systemPrompt: systemPrompt ?? oldDescription ?? 'You are a helpful AI assistant.',
       model: json['model'] as String,
       lastMessage: json['last_message'] as String?,
       lastMessageTime: json['last_message_time'] != null
@@ -103,6 +124,9 @@ class AiChat {
       isPinned: json['is_pinned'] as bool? ?? false,
       sortOrder: json['sort_order'] as int? ?? 0,
       avatarUrl: json['avatar_url'] as String?,
+      lastReadAt: json['last_read_at'] != null
+          ? DateTime.parse(json['last_read_at'] as String)
+          : null,
       responseTone: json['response_tone'] as String? ?? 'friendly',
       responseLength: json['response_length'] as String? ?? 'balanced',
       writingStyle: json['writing_style'] as String? ?? 'simple',
@@ -112,7 +136,7 @@ class AiChat {
   
   /// Get enhanced system prompt with response style preferences
   String getEnhancedSystemPrompt() {
-    final buffer = StringBuffer(description);
+    final buffer = StringBuffer(systemPrompt);
     buffer.write('\n\nResponse Style Guidelines:');
     
     // Add tone guidance

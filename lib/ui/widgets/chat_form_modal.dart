@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:traitus/models/ai_chat.dart';
+import 'package:traitus/ui/widgets/app_avatar.dart';
 import 'package:traitus/services/storage_service.dart';
 
 /// Reusable modal for creating or editing AI chats
@@ -26,7 +27,8 @@ class ChatFormModal extends StatefulWidget {
   /// Returns the updated/new chat data
   final Future<void> Function({
     required String name,
-    required String description,
+    required String shortDescription,
+    required String systemPrompt,
     String? avatarUrl,
     required String responseTone,
     required String responseLength,
@@ -44,7 +46,8 @@ class ChatFormModal extends StatefulWidget {
 class _ChatFormModalState extends State<ChatFormModal> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _nameController;
-  late final TextEditingController _descriptionController;
+  late final TextEditingController _shortDescriptionController;
+  late final TextEditingController _systemPromptController;
   final _imagePicker = ImagePicker();
   final _storageService = StorageService();
   
@@ -64,7 +67,8 @@ class _ChatFormModalState extends State<ChatFormModal> {
     final chat = widget.chat;
     
     _nameController = TextEditingController(text: chat?.name ?? '');
-    _descriptionController = TextEditingController(text: chat?.description ?? '');
+    _shortDescriptionController = TextEditingController(text: chat?.shortDescription ?? '');
+    _systemPromptController = TextEditingController(text: chat?.systemPrompt ?? '');
     
     // Initialize response style preferences
     _selectedTone = chat?.responseTone ?? 'friendly';
@@ -76,7 +80,8 @@ class _ChatFormModalState extends State<ChatFormModal> {
   @override
   void dispose() {
     _nameController.dispose();
-    _descriptionController.dispose();
+    _shortDescriptionController.dispose();
+    _systemPromptController.dispose();
     super.dispose();
   }
 
@@ -134,7 +139,8 @@ class _ChatFormModalState extends State<ChatFormModal> {
 
         await widget.onSave(
           name: _nameController.text.trim(),
-          description: _descriptionController.text.trim(),
+          shortDescription: _shortDescriptionController.text.trim(),
+          systemPrompt: _systemPromptController.text.trim(),
           avatarUrl: avatarUrl,
           responseTone: _selectedTone,
           responseLength: _selectedLength,
@@ -234,47 +240,26 @@ class _ChatFormModalState extends State<ChatFormModal> {
                           onTap: _isSaving ? null : _pickImage,
                           child: Stack(
                             children: [
-                              Container(
-                                width: 100,
-                                height: 100,
-                                decoration: BoxDecoration(
-                                  color: theme.colorScheme.primaryContainer,
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: theme.colorScheme.primary,
-                                    width: 2,
-                                  ),
-                                ),
-                                child: _selectedImagePath != null
-                                    ? ClipOval(
-                                        child: Image.file(
+                              ClipOval(
+                                child: SizedBox(
+                                  width: 100,
+                                  height: 100,
+                                  child: _selectedImagePath != null
+                                      ? Image.file(
                                           File(_selectedImagePath!),
                                           fit: BoxFit.cover,
                                           width: 100,
                                           height: 100,
+                                        )
+                                      : AppAvatar(
+                                          size: 100,
+                                          name: _nameController.text.isEmpty
+                                              ? (widget.chat?.name ?? 'A')
+                                              : _nameController.text,
+                                          imageUrl: widget.chat?.avatarUrl,
+                                          isCircle: true,
                                         ),
-                                      )
-                                    : (widget.chat?.avatarUrl != null && widget.chat!.avatarUrl!.isNotEmpty)
-                                        ? ClipOval(
-                                            child: Image.network(
-                                              widget.chat!.avatarUrl!,
-                                              fit: BoxFit.cover,
-                                              width: 100,
-                                              height: 100,
-                                              errorBuilder: (context, error, stackTrace) {
-                                                return Icon(
-                                                  Icons.smart_toy_outlined,
-                                                  size: 48,
-                                                  color: theme.colorScheme.onPrimaryContainer,
-                                                );
-                                              },
-                                            ),
-                                          )
-                                        : Icon(
-                                            Icons.smart_toy_outlined,
-                                            size: 48,
-                                            color: theme.colorScheme.onPrimaryContainer,
-                                          ),
+                                ),
                               ),
                               Positioned(
                                 bottom: 0,
@@ -325,13 +310,34 @@ class _ChatFormModalState extends State<ChatFormModal> {
                       ),
                       const SizedBox(height: 16),
                       
-                      // System Prompt
+                      // Short Description (for user view)
                       TextFormField(
-                        controller: _descriptionController,
+                        controller: _shortDescriptionController,
+                        decoration: const InputDecoration(
+                          labelText: 'Short Description',
+                          hintText: 'e.g., Your programming companion for coding help',
+                          helperText: 'Brief description shown under the AI name (visible to users)',
+                          helperMaxLines: 2,
+                          prefixIcon: Icon(Icons.description_outlined),
+                          border: OutlineInputBorder(),
+                        ),
+                        maxLines: 2,
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Please enter a short description';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      
+                      // System Prompt (for AI)
+                      TextFormField(
+                        controller: _systemPromptController,
                         decoration: const InputDecoration(
                           labelText: 'System Prompt',
                           hintText: 'e.g., You are an expert coding assistant specialized in Flutter and Dart',
-                          helperText: 'Define the AI\'s personality and expertise',
+                          helperText: 'Define the AI\'s personality and expertise (not shown to users)',
                           helperMaxLines: 2,
                           prefixIcon: Icon(Icons.psychology_outlined),
                           border: OutlineInputBorder(),

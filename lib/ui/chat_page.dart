@@ -9,6 +9,7 @@ import 'package:traitus/providers/chat_provider.dart';
 import 'package:traitus/providers/notes_provider.dart';
 import 'package:traitus/providers/chats_list_provider.dart';
 import 'package:traitus/ui/widgets/chat_form_modal.dart';
+import 'package:traitus/ui/widgets/app_avatar.dart';
 
 class ChatPage extends StatefulWidget {
   const ChatPage({super.key, required this.chatId});
@@ -24,6 +25,8 @@ class _ChatPageState extends State<ChatPage> {
   final ScrollController _scrollController = ScrollController();
   late final ChatProvider _chatProvider;
   bool _isInitialScroll = true;
+  bool _hasInitialMessagesLoaded = false;
+  int _previousMessageCount = 0;
 
   @override
   void initState() {
@@ -33,14 +36,25 @@ class _ChatPageState extends State<ChatPage> {
     _chatProvider.addListener(_onChatUpdate);
     _scrollController.addListener(_onScroll);
     
+    // Mark chat as read when page opens - do this after first frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scrollToBottom();
-      _isInitialScroll = false;
+      if (!mounted) return;
+      try {
+        final chatsListProvider = context.read<ChatsListProvider>();
+        chatsListProvider.setActiveChat(widget.chatId);
+        chatsListProvider.markChatAsRead(widget.chatId);
+      } catch (e) {
+        // Provider might be disposed, ignore
+        debugPrint('Could not mark chat as read: $e');
+      }
     });
   }
 
   @override
   void dispose() {
+    try {
+      context.read<ChatsListProvider>().setActiveChat(null);
+    } catch (_) {}
     _chatProvider.removeListener(_onChatUpdate);
     _scrollController.removeListener(_onScroll);
     _controller.dispose();
@@ -49,53 +63,117 @@ class _ChatPageState extends State<ChatPage> {
   }
   
   void _onChatUpdate() {
-    // Auto-scroll to bottom when new messages arrive
-    // But only if we're not currently loading older messages
-    if (!_chatProvider.isLoadingOlder) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _scrollToBottom();
+    if (!mounted) return;
+    
+    try {
+      // Check if initial messages have finished loading
+      if (!_hasInitialMessagesLoaded && !_chatProvider.isLoading) {
+        _hasInitialMessagesLoaded = true;
+        final currentMessageCount = _chatProvider.messages
+            .where((m) => m.role != ChatRole.system)
+            .length;
+        _previousMessageCount = currentMessageCount;
+        
+        // With reverse: true, ListView naturally starts at bottom (position 0)
+        // No need to scroll - messages are already positioned correctly!
+        return;
+      }
+      
+      // Only auto-scroll with animation when NEW messages arrive
+      // (not during initial load, not when loading older messages)
+      if (_hasInitialMessagesLoaded && 
+          !_chatProvider.isLoading && 
+          !_chatProvider.isLoadingOlder) {
+        // Track total messages (including pending) to detect new additions
+        final currentMessageCount = _chatProvider.messages
+            .where((m) => m.role != ChatRole.system)
+            .length;
+        
+        if (currentMessageCount > _previousMessageCount) {
+          _previousMessageCount = currentMessageCount;
+          
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && _scrollController.hasClients) {
+              // With reverse: true, position 0 is at bottom (latest messages)
+              // Only scroll if user is near the bottom (within 300px from position 0)
+              final position = _scrollController.position;
+              final currentScroll = position.pixels;
+              
+              // Distance from bottom (position 0)
+              if (currentScroll < 300) {
+                _scrollToBottom();
+              }
+            }
+          });
         }
-      });
+      }
+    } catch (e) {
+      // Provider might be disposed, ignore
+      debugPrint('Error in _onChatUpdate: $e');
     }
   }
 
   void _onScroll() {
-    if (!_scrollController.hasClients) return;
+    if (!mounted || !_scrollController.hasClients) return;
     
-    // Check if user has scrolled near the top (within 200 pixels)
-    if (_scrollController.position.pixels <= 200 && 
-        !_chatProvider.isLoadingOlder &&
-        _chatProvider.hasMoreMessages &&
-        !_isInitialScroll) {
-      _loadOlderMessages();
+    try {
+      final position = _scrollController.position;
+      // With reverse: true, scrolling up means scrolling toward maxScrollExtent
+      // Check if user has scrolled near the top (maxScrollExtent) to load older messages
+      final distanceFromTop = position.maxScrollExtent - position.pixels;
+      if (distanceFromTop <= 200 && 
+          !_chatProvider.isLoadingOlder &&
+          _chatProvider.hasMoreMessages &&
+          !_isInitialScroll) {
+        _loadOlderMessages();
+      }
+    } catch (e) {
+      // Provider might be disposed, ignore
+      debugPrint('Error in _onScroll: $e');
     }
   }
 
   Future<void> _loadOlderMessages() async {
-    if (_chatProvider.isLoadingOlder) return;
+    if (!mounted) return;
+    try {
+      if (_chatProvider.isLoadingOlder) return;
+    } catch (e) {
+      debugPrint('Error accessing provider in _loadOlderMessages: $e');
+      return;
+    }
     
+    // With reverse: true, we need to preserve scroll position differently
     // Save current scroll position and max extent
     final scrollOffset = _scrollController.offset;
     final maxExtent = _scrollController.position.maxScrollExtent;
     
-    await _chatProvider.loadOlderMessages();
+    try {
+      await _chatProvider.loadOlderMessages();
+    } catch (e) {
+      debugPrint('Error loading older messages: $e');
+      return;
+    }
     
     // Restore scroll position after loading older messages
-    // This prevents the jarring jump when messages are inserted at the top
+    // With reverse: true, older messages are added at the end (top visually)
+    // We need to maintain the same visual position
+    if (!mounted) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
+      if (mounted && _scrollController.hasClients) {
         final newMaxExtent = _scrollController.position.maxScrollExtent;
         final difference = newMaxExtent - maxExtent;
+        // Adjust scroll to maintain visual position
         _scrollController.jumpTo(scrollOffset + difference);
       }
     });
   }
 
   void _scrollToBottom() {
+    // With reverse: true, position 0 is at the bottom (latest messages)
+    // Scroll to position 0 to show the latest messages
     if (_scrollController.hasClients) {
       _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
+        0,
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
       );
@@ -104,25 +182,37 @@ class _ChatPageState extends State<ChatPage> {
 
   Future<void> _submit(BuildContext context) async {
     final text = _controller.text;
-    if (text.trim().isEmpty) return;
+    if (text.trim().isEmpty || !mounted) return;
     _controller.clear();
     
-    final chatProvider = context.read<ChatProvider>();
-    
-    // Start sending the message (this will add user message immediately)
-    final sendFuture = chatProvider.sendUserMessage(text);
-    
-    // Scroll to show the user's message immediately after it's added
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scrollToBottom();
-    });
-    
-    // Wait for the response to complete
-    await sendFuture;
-    
-    // Update the last message in the chat list
-    final chatsListProvider = context.read<ChatsListProvider>();
-    chatsListProvider.updateLastMessage(widget.chatId, text);
+    try {
+      final chatProvider = context.read<ChatProvider>();
+      
+      // Start sending the message (this will add user message immediately)
+      final sendFuture = chatProvider.sendUserMessage(text);
+      
+      // Scroll to show the user's message immediately after it's added
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _scrollController.hasClients) {
+          _scrollToBottom();
+        }
+      });
+      
+      // Wait for the response to complete
+      await sendFuture;
+      
+      // Update the last message in the chat list
+      if (mounted) {
+        try {
+          final chatsListProvider = context.read<ChatsListProvider>();
+          chatsListProvider.updateLastMessage(widget.chatId, text);
+        } catch (e) {
+          debugPrint('Could not update last message: $e');
+        }
+      }
+    } catch (e) {
+      debugPrint('Error submitting message: $e');
+    }
   }
 
   void _copyMessage(String content) {
@@ -264,7 +354,8 @@ class _ChatPageState extends State<ChatPage> {
         isCreating: false,
         onSave: ({
           required String name,
-          required String description,
+          required String shortDescription,
+          required String systemPrompt,
           String? avatarUrl,
           required String responseTone,
           required String responseLength,
@@ -273,7 +364,8 @@ class _ChatPageState extends State<ChatPage> {
         }) async {
           final updatedChat = chat.copyWith(
             name: name,
-            description: description,
+            shortDescription: shortDescription,
+            systemPrompt: systemPrompt,
             avatarUrl: avatarUrl,
             responseTone: responseTone,
             responseLength: responseLength,
@@ -310,14 +402,20 @@ class _ChatPageState extends State<ChatPage> {
           ),
           TextButton(
             onPressed: () {
-              _chatProvider.resetConversation();
+              try {
+                _chatProvider.resetConversation();
+              } catch (e) {
+                debugPrint('Error resetting conversation: $e');
+              }
               Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('All messages cleared'),
-                  duration: Duration(seconds: 2),
-                ),
-              );
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('All messages cleared'),
+                    duration: Duration(seconds: 2),
+                  ),
+                );
+              }
             },
             child: Text(
               'Clear',
@@ -345,36 +443,11 @@ class _ChatPageState extends State<ChatPage> {
             // Avatar - Tappable
             GestureDetector(
               onTap: () => _showEditChatDialog(context),
-              child: Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.primaryContainer,
-                  shape: BoxShape.circle,
-                ),
-                child: chat?.avatarUrl != null && chat!.avatarUrl!.isNotEmpty
-                    ? ClipOval(
-                        child: Image.network(
-                          chat.avatarUrl!,
-                          width: 40,
-                          height: 40,
-                          fit: BoxFit.cover,
-                          cacheWidth: 80,
-                          cacheHeight: 80,
-                          errorBuilder: (context, error, stackTrace) {
-                            return Icon(
-                              Icons.smart_toy_outlined,
-                              size: 20,
-                              color: theme.colorScheme.onPrimaryContainer,
-                            );
-                          },
-                        ),
-                      )
-                    : Icon(
-                        Icons.smart_toy_outlined,
-                        size: 20,
-                        color: theme.colorScheme.onPrimaryContainer,
-                      ),
+              child: AppAvatar(
+                size: 40,
+                name: chatName,
+                imageUrl: chat?.avatarUrl,
+                isCircle: true,
               ),
             ),
             const SizedBox(width: 12),
@@ -477,7 +550,7 @@ class _ChatPageState extends State<ChatPage> {
                     final aiChat = context.read<ChatsListProvider>().getChatById(widget.chatId);
                     return _EmptyState(
                       chatName: aiChat?.name ?? '',
-                      chatDescription: aiChat?.description ?? '',
+                      chatDescription: aiChat?.shortDescription ?? '',
                       onSuggestionTap: (text) {
                         _controller.text = text;
                         _submit(context);
@@ -490,23 +563,24 @@ class _ChatPageState extends State<ChatPage> {
                       constraints: BoxConstraints(maxWidth: maxWidth),
                       child: ListView.separated(
                         controller: _scrollController,
+                        reverse: true, // Standard chat behavior: show latest messages at bottom
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                         itemCount: items.length + (chat.hasMoreMessages ? 1 : 0),
                         separatorBuilder: (_, __) => const SizedBox(height: 24),
                         itemBuilder: (context, index) {
-                          // Show loading indicator at the top if there are more messages
-                          if (index == 0 && chat.hasMoreMessages) {
+                          // Show loading indicator at the end (top when reversed) if there are more messages
+                          if (chat.hasMoreMessages && index == items.length) {
                             return _LoadMoreIndicator(
                               isLoading: chat.isLoadingOlder,
                               theme: theme,
                             );
                           }
                           
-                          // Adjust index if we showed the load more indicator
-                          final messageIndex = chat.hasMoreMessages ? index - 1 : index;
+                          // Get message index (reverse order: last item is at index 0)
+                          final messageIndex = items.length - 1 - index;
                           final message = items[messageIndex];
                           final isUser = message.role == ChatRole.user;
-                          final isLast = messageIndex == items.length - 1;
+                          final isLast = messageIndex == 0; // First item in list is last message
                           final isLastAssistant = isLast &&
                               !isUser &&
                               !message.isPending &&

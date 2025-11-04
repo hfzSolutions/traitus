@@ -1,10 +1,16 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:traitus/config/default_ai_config.dart';
 import 'package:traitus/providers/auth_provider.dart';
 import 'package:traitus/services/storage_service.dart';
+import 'package:traitus/services/openrouter_api.dart';
+import 'package:traitus/ui/home_page.dart';
+import 'package:traitus/providers/chats_list_provider.dart';
+import 'package:traitus/ui/widgets/app_avatar.dart';
 
 class OnboardingPage extends StatefulWidget {
   const OnboardingPage({super.key});
@@ -25,12 +31,27 @@ class _OnboardingPageState extends State<OnboardingPage>
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
   
+  // Loading carousel state
+  Timer? _loadingCarouselTimer;
+  int _loadingCarouselIndex = 0;
+  final List<String> _loadingCarouselMessages = const [
+    'This may take a moment.',
+    'Setting up your assistants...',
+  ];
+  
   // New fields
   File? _selectedImage;
   DateTime? _selectedDateOfBirth;
   String _selectedLanguage = 'en';
   final _imagePicker = ImagePicker();
   final _storageService = StorageService();
+  final _openRouterApi = OpenRouterApi();
+
+  // AI recommendation state
+  List<String>? _aiRecommendedChatIds;
+  List<Map<String, dynamic>>? _aiDynamicChats;
+  bool _isRecommending = false;
+  String? _recommendError;
 
   // Available preferences for AI chat selection
   final List<Map<String, dynamic>> _availablePreferences = [
@@ -240,6 +261,7 @@ class _OnboardingPageState extends State<OnboardingPage>
   final List<Map<String, String>> _availableLanguages = [
     {'code': 'en', 'name': 'English', 'flag': '🇬🇧'},
     {'code': 'id', 'name': 'Indonesian', 'flag': '🇮🇩'},
+    {'code': 'ms', 'name': 'Malay', 'flag': '🇲🇾'},
     {'code': 'es', 'name': 'Spanish', 'flag': '🇪🇸'},
     {'code': 'fr', 'name': 'French', 'flag': '🇫🇷'},
     {'code': 'de', 'name': 'German', 'flag': '🇩🇪'},
@@ -277,6 +299,7 @@ class _OnboardingPageState extends State<OnboardingPage>
   void dispose() {
     _usernameController.dispose();
     _animationController.dispose();
+    _loadingCarouselTimer?.cancel();
     super.dispose();
   }
 
@@ -286,18 +309,24 @@ class _OnboardingPageState extends State<OnboardingPage>
       _animationController.reset();
       _animationController.forward();
     });
+
+    // When entering AI selection step, fetch AI-based recommendations
+    if (newStep == 3) {
+      _fetchAiRecommendations();
+    }
   }
 
-  Future<void> _pickImage() async {
+  Future<void> _pickImage(ImageSource source) async {
     try {
       final XFile? image = await _imagePicker.pickImage(
-        source: ImageSource.gallery,
+        source: source,
         maxWidth: 512,
         maxHeight: 512,
         imageQuality: 85,
       );
       
       if (image != null) {
+        if (!mounted) return;
         setState(() {
           _selectedImage = File(image.path);
         });
@@ -311,6 +340,43 @@ class _OnboardingPageState extends State<OnboardingPage>
         ),
       );
     }
+  }
+
+  Future<void> _showImageSourcePicker() async {
+    final theme = Theme.of(context);
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: theme.colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: Icon(Icons.photo_camera_rounded, color: theme.colorScheme.primary),
+                title: const Text('Take Photo'),
+                onTap: () async {
+                  Navigator.of(context).pop();
+                  await _pickImage(ImageSource.camera);
+                },
+              ),
+              ListTile(
+                leading: Icon(Icons.photo_library_rounded, color: theme.colorScheme.primary),
+                title: const Text('Choose from Gallery'),
+                onTap: () async {
+                  Navigator.of(context).pop();
+                  await _pickImage(ImageSource.gallery);
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _selectDateOfBirth() async {
@@ -335,13 +401,100 @@ class _OnboardingPageState extends State<OnboardingPage>
     );
     
     if (picked != null) {
+      if (!mounted) return;
       setState(() {
         _selectedDateOfBirth = picked;
       });
     }
   }
 
+  Future<void> _fetchAiRecommendations() async {
+    if (_selectedPreferences.isEmpty) {
+      setState(() {
+        _aiRecommendedChatIds = null;
+        _aiDynamicChats = null;
+        _recommendError = null;
+        _isRecommending = false;
+      });
+      _loadingCarouselTimer?.cancel();
+      return;
+    }
+
+    setState(() {
+      _isRecommending = true;
+      _recommendError = null;
+    });
+    // Start carousel
+    _loadingCarouselTimer?.cancel();
+    _loadingCarouselIndex = 0;
+    _loadingCarouselTimer = Timer.periodic(const Duration(seconds: 3), (t) {
+      if (!mounted || !_isRecommending) {
+        t.cancel();
+        return;
+      }
+      setState(() {
+        _loadingCarouselIndex = (_loadingCarouselIndex + 1) % _loadingCarouselMessages.length;
+      });
+    });
+
+    try {
+      // Try dynamic assistant definitions first
+      final dynamicChats = await _openRouterApi.recommendChatDefinitions(
+        selectedPreferences: _selectedPreferences.toList(),
+        languageCode: _selectedLanguage,
+      );
+      if (mounted) {
+        setState(() {
+          _aiDynamicChats = dynamicChats.isNotEmpty ? dynamicChats : null;
+        });
+      }
+
+      // Then compute fallback ordered IDs
+      final allowedIds = _availableAIChats.keys.toList();
+      final ids = await _openRouterApi.recommendChatIds(
+        selectedPreferences: _selectedPreferences.toList(),
+        allowedChatIds: allowedIds,
+      );
+      if (!mounted) return;
+      setState(() {
+        _aiRecommendedChatIds = ids;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+        _recommendError = e.toString();
+        _aiRecommendedChatIds = null; // Fallback will be used
+        _aiDynamicChats = null;
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isRecommending = false;
+        });
+        HapticFeedback.selectionClick();
+        _loadingCarouselTimer?.cancel();
+      }
+    }
+  }
+
   List<Map<String, dynamic>> _getRecommendedChats() {
+    // Prefer dynamic suggestions if present
+    if (_aiDynamicChats != null && _aiDynamicChats!.isNotEmpty) {
+      return _aiDynamicChats!;
+    }
+    // If AI provided ordering, use it and filter to preferences match
+    if (_aiRecommendedChatIds != null && _aiRecommendedChatIds!.isNotEmpty) {
+      final byId = _availableAIChats;
+      final filteredOrdered = _aiRecommendedChatIds!
+          .map((id) => byId[id])
+          .where((chat) => chat != null)
+          .cast<Map<String, dynamic>>()
+          .where((chat) => _selectedPreferences.contains(chat['preference']))
+          .toList();
+      if (filteredOrdered.isNotEmpty) return filteredOrdered;
+    }
+    // Fallback: simple filter by selected preferences
     return _availableAIChats.values
         .where((chat) => _selectedPreferences.contains(chat['preference']))
         .toList();
@@ -359,12 +512,20 @@ class _OnboardingPageState extends State<OnboardingPage>
     try {
       String? avatarUrl;
       
-      // Upload profile image if selected
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      // Upload/update profile image if selected (delete old to avoid duplicates)
       if (_selectedImage != null) {
-        avatarUrl = await _storageService.uploadUserAvatar(_selectedImage!.path);
+        avatarUrl = await _storageService.updateUserAvatar(
+          _selectedImage!.path,
+          authProvider.userProfile?.avatarUrl,
+        );
       }
 
-      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      // Build selected definitions from currently recommended list
+      final recommended = _getRecommendedChats();
+      final selectedDefs = recommended
+          .where((c) => _selectedAIChats.contains((c['id'] as String)))
+          .toList();
 
       // Complete onboarding with all user data
       await authProvider.completeOnboarding(
@@ -374,6 +535,7 @@ class _OnboardingPageState extends State<OnboardingPage>
         avatarUrl: avatarUrl,
         preferences: _selectedPreferences.toList(),
         selectedChatIds: _selectedAIChats.toList(),
+        selectedChatDefinitions: selectedDefs,
       );
 
       if (!mounted) return;
@@ -387,9 +549,7 @@ class _OnboardingPageState extends State<OnboardingPage>
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  _selectedAIChats.isEmpty
-                      ? 'Welcome! You can create AI chats anytime.'
-                      : 'Welcome! Your AI assistants are ready.',
+                  'Welcome! Your AI assistants are ready.',
                 ),
               ),
             ],
@@ -400,6 +560,20 @@ class _OnboardingPageState extends State<OnboardingPage>
             borderRadius: BorderRadius.circular(12),
           ),
         ),
+      );
+
+      // Refresh chats so Home shows the latest list created during onboarding
+      try {
+        await context.read<ChatsListProvider>().refreshChats();
+      } catch (_) {}
+
+      // Ensure we leave onboarding after success
+      // Give the snackbar a tick to show, then navigate to Home
+      await Future.delayed(const Duration(milliseconds: 200));
+      if (!mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const HomePage()),
+        (route) => false,
       );
     } catch (e) {
       if (!mounted) return;
@@ -558,53 +732,63 @@ class _OnboardingPageState extends State<OnboardingPage>
               
               // Profile Image Selector
               Center(
-                child: GestureDetector(
-                  onTap: _pickImage,
-                  child: Stack(
-                    children: [
-                      Container(
-                        width: 120,
-                        height: 120,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Theme.of(context).colorScheme.primaryContainer,
-                          image: _selectedImage != null
-                              ? DecorationImage(
-                                  image: FileImage(_selectedImage!),
-                                  fit: BoxFit.cover,
-                                )
-                              : null,
-                        ),
-                        child: _selectedImage == null
-                            ? Icon(
-                                Icons.person_rounded,
-                                size: 60,
-                                color: Theme.of(context).colorScheme.onPrimaryContainer,
-                              )
-                            : null,
-                      ),
-                      Positioned(
-                        bottom: 0,
-                        right: 0,
-                        child: Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.primary,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: Theme.of(context).colorScheme.surface,
-                              width: 3,
+                child: Consumer<AuthProvider>(
+                  builder: (context, auth, _) {
+                    final displayName = _usernameController.text.trim().isNotEmpty
+                        ? _usernameController.text.trim()
+                        : (auth.userProfile?.displayName ?? 'User');
+                    final imageUrl = auth.userProfile?.avatarUrl;
+                    return GestureDetector(
+                      onTap: () { _showImageSourcePicker(); },
+                      child: Stack(
+                        children: [
+                          // Base avatar (existing profile or initials)
+                          ClipOval(
+                            child: SizedBox(
+                              width: 120,
+                              height: 120,
+                              child: AppAvatar(
+                                size: 120,
+                                name: displayName,
+                                imageUrl: _selectedImage == null ? imageUrl : null,
+                                isCircle: true,
+                              ),
                             ),
                           ),
-                          child: Icon(
-                            Icons.camera_alt_rounded,
-                            size: 20,
-                            color: Theme.of(context).colorScheme.onPrimary,
+                          // If a new image is picked, preview it on top
+                          if (_selectedImage != null)
+                            ClipOval(
+                              child: Image.file(
+                                _selectedImage!,
+                                width: 120,
+                                height: 120,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                          Positioned(
+                            bottom: 0,
+                            right: 0,
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).colorScheme.primary,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: Theme.of(context).colorScheme.surface,
+                                  width: 3,
+                                ),
+                              ),
+                              child: Icon(
+                                Icons.camera_alt_rounded,
+                                size: 20,
+                                color: Theme.of(context).colorScheme.onPrimary,
+                              ),
+                            ),
                           ),
-                        ),
+                        ],
                       ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
               ),
               const SizedBox(height: 12),
@@ -647,33 +831,44 @@ class _OnboardingPageState extends State<OnboardingPage>
               ),
               const SizedBox(height: 16),
               
-              // Date of Birth field
-              InkWell(
-                onTap: _selectDateOfBirth,
-                borderRadius: BorderRadius.circular(16),
-                child: InputDecorator(
-                  decoration: InputDecoration(
-                    labelText: 'Date of Birth',
-                    hintText: 'Select your date of birth',
-                    prefixIcon: const Icon(Icons.cake_rounded),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
+              // Date of Birth field (required)
+              FormField<DateTime?>(
+                validator: (_) {
+                  if (_selectedDateOfBirth == null) {
+                    return 'Please select your date of birth';
+                  }
+                  return null;
+                },
+                builder: (state) {
+                  return InkWell(
+                    onTap: _selectDateOfBirth,
+                    borderRadius: BorderRadius.circular(16),
+                    child: InputDecorator(
+                      decoration: InputDecoration(
+                        labelText: 'Date of Birth',
+                        hintText: 'Select your date of birth',
+                        prefixIcon: const Icon(Icons.cake_rounded),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        filled: true,
+                        fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                        errorText: state.errorText,
+                      ),
+                      child: Text(
+                        _selectedDateOfBirth != null
+                            ? '${_selectedDateOfBirth!.day}/${_selectedDateOfBirth!.month}/${_selectedDateOfBirth!.year}'
+                            : 'Tap to select',
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: _selectedDateOfBirth != null
+                              ? Theme.of(context).colorScheme.onSurface
+                              : Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
                     ),
-                    filled: true,
-                    fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  ),
-                  child: Text(
-                    _selectedDateOfBirth != null
-                        ? '${_selectedDateOfBirth!.day}/${_selectedDateOfBirth!.month}/${_selectedDateOfBirth!.year}'
-                        : 'Tap to select',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: _selectedDateOfBirth != null
-                          ? Theme.of(context).colorScheme.onSurface
-                          : Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
+                  );
+                },
               ),
               const SizedBox(height: 16),
               
@@ -748,6 +943,7 @@ class _OnboardingPageState extends State<OnboardingPage>
                 Expanded(
                   child: FilledButton.icon(
                     onPressed: () {
+                      HapticFeedback.selectionClick();
                       if (_formKey.currentState!.validate()) {
                         _changeStep(2);
                       }
@@ -937,7 +1133,10 @@ class _OnboardingPageState extends State<OnboardingPage>
                   child: FilledButton.icon(
                     onPressed: _selectedPreferences.isEmpty
                         ? null
-                        : () => _changeStep(3),
+                        : () {
+                            HapticFeedback.selectionClick();
+                            _changeStep(3);
+                          },
                     icon: const Icon(Icons.arrow_forward_rounded),
                     label: const Text('Next'),
                     style: FilledButton.styleFrom(
@@ -967,7 +1166,38 @@ class _OnboardingPageState extends State<OnboardingPage>
       children: [
         // Scrollable content
         Expanded(
-          child: recommendedChats.isEmpty
+          child: _isRecommending
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const CircularProgressIndicator(),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Finding the best assistants for you...',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      const SizedBox(height: 8),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 400),
+                          switchInCurve: Curves.easeIn,
+                          switchOutCurve: Curves.easeOut,
+                          child: Text(
+                            _loadingCarouselMessages[_loadingCarouselIndex],
+                            key: ValueKey(_loadingCarouselIndex),
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : recommendedChats.isEmpty
               ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -979,17 +1209,22 @@ class _OnboardingPageState extends State<OnboardingPage>
                       ),
                       const SizedBox(height: 16),
                       Text(
-                        'No recommendations available',
+                        _recommendError != null
+                            ? 'Could not get AI recommendations'
+                            : 'No recommendations available',
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Please go back and select your interests',
+                        _recommendError != null
+                            ? 'You can add assistants later.'
+                            : 'Update interests to see suggestions.',
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                               color: Theme.of(context)
                                   .colorScheme
                                   .onSurfaceVariant,
                             ),
+                        textAlign: TextAlign.center,
                       ),
                     ],
                   ),
@@ -1013,7 +1248,7 @@ class _OnboardingPageState extends State<OnboardingPage>
                             const SizedBox(height: 12),
                             
                             Text(
-                              'Based on your interests, we recommend these AI assistants. Select the ones you\'d like (optional).',
+                              'Based on your interests, we recommend these AI assistants. Select the ones you\'d like.',
                               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                                     height: 1.5,
@@ -1068,35 +1303,14 @@ class _OnboardingPageState extends State<OnboardingPage>
                             padding: const EdgeInsets.all(16),
                             child: Row(
                               children: [
-                                // Avatar
-                                Container(
-                                  width: 64,
-                                  height: 64,
-                                  decoration: BoxDecoration(
-                                    gradient: isSelected
-                                        ? LinearGradient(
-                                            colors: [
-                                              Theme.of(context)
-                                                  .colorScheme
-                                                  .primary,
-                                              Theme.of(context)
-                                                  .colorScheme
-                                                  .tertiary,
-                                            ],
-                                          )
-                                        : null,
-                                    color: isSelected
-                                        ? null
-                                        : Theme.of(context)
-                                            .colorScheme
-                                            .surface,
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                  child: Center(
-                                    child: Text(
-                                      chat['avatar'] as String,
-                                      style: const TextStyle(fontSize: 32),
-                                    ),
+                                // Avatar (use initial-based gradient, ignore emoji/url)
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(16),
+                                  child: AppAvatar(
+                                    size: 64,
+                                    name: chat['name'] as String,
+                                    imageUrl: null,
+                                    isCircle: false,
                                   ),
                                 ),
                                 const SizedBox(width: 16),
@@ -1122,7 +1336,7 @@ class _OnboardingPageState extends State<OnboardingPage>
                                       ),
                                       const SizedBox(height: 4),
                                       Text(
-                                        chat['description'] as String,
+                                        (chat['shortDescription'] as String?) ?? (chat['description'] as String? ?? ''),
                                         style: Theme.of(context)
                                             .textTheme
                                             .bodySmall
@@ -1216,6 +1430,28 @@ class _OnboardingPageState extends State<OnboardingPage>
                         ),
                       ),
                     ),
+                    // Regenerate button
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(32, 8, 32, 0),
+                        child: Align(
+                          alignment: Alignment.center,
+                          child: TextButton.icon(
+                            onPressed: _isRecommending
+                                ? null
+                                : () {
+                                    HapticFeedback.lightImpact();
+                                    _fetchAiRecommendations();
+                                  },
+                            icon: const Icon(Icons.refresh_rounded, size: 18),
+                            label: const Text('Regenerate suggestions'),
+                            style: TextButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                     
                     // Bottom padding
                     const SliverToBoxAdapter(
@@ -1258,7 +1494,12 @@ class _OnboardingPageState extends State<OnboardingPage>
                 const SizedBox(width: 16),
                 Expanded(
                   child: FilledButton.icon(
-                    onPressed: _isLoading ? null : _completeOnboarding,
+                    onPressed: (_isLoading || _isRecommending || (_selectedAIChats.isEmpty && recommendedChats.isNotEmpty))
+                        ? null
+                        : () {
+                            HapticFeedback.mediumImpact();
+                            _completeOnboarding();
+                          },
                     icon: _isLoading
                         ? const SizedBox(
                             width: 20,
@@ -1269,11 +1510,17 @@ class _OnboardingPageState extends State<OnboardingPage>
                             ),
                           )
                         : const Icon(Icons.check_rounded),
-                    label: Text(_isLoading
-                        ? 'Setting up...'
-                        : _selectedAIChats.isEmpty
-                            ? 'Complete'
-                            : 'Complete (${_selectedAIChats.length})'),
+                    label: Text(
+                      _isLoading
+                          ? 'Setting up...'
+                          : _isRecommending
+                              ? 'Finding...'
+                              : (_selectedAIChats.isEmpty && recommendedChats.isNotEmpty)
+                                  ? 'Select at least one'
+                                  : (_selectedAIChats.isEmpty && recommendedChats.isEmpty)
+                                      ? 'Complete'
+                                      : 'Complete (${_selectedAIChats.length})',
+                    ),
                     style: FilledButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(
@@ -1293,6 +1540,7 @@ class _OnboardingPageState extends State<OnboardingPage>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      resizeToAvoidBottomInset: false,
       backgroundColor: Theme.of(context).colorScheme.surface,
       body: SafeArea(
         child: Column(
