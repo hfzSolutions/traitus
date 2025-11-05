@@ -46,7 +46,7 @@ class AuthProvider extends ChangeNotifier {
     try {
       _userProfile = await _databaseService.fetchUserProfile();
     } catch (e) {
-      print('Error loading user profile: $e');
+      debugPrint('Error loading user profile: $e');
     } finally {
       _isInitializing = false; // Always set to false when done
       notifyListeners();

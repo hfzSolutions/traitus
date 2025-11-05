@@ -5,6 +5,9 @@ import 'package:traitus/models/ai_chat.dart';
 import 'package:traitus/ui/widgets/app_avatar.dart';
 import 'package:traitus/services/storage_service.dart';
 import 'package:traitus/services/openrouter_api.dart';
+import 'package:traitus/services/models_service.dart';
+import 'package:traitus/services/entitlements_service.dart';
+import 'package:traitus/ui/pro_upgrade_page.dart';
 
 /// Reusable modal for creating or editing AI chats
 /// 
@@ -30,6 +33,7 @@ class ChatFormModal extends StatefulWidget {
     required String name,
     required String shortDescription,
     required String systemPrompt,
+    required String model,
     String? avatarUrl,
     required String responseTone,
     required String responseLength,
@@ -59,6 +63,11 @@ class _ChatFormModalState extends State<ChatFormModal> {
   bool _showAdvancedSettings = false;
   bool _useQuickCreate = false; // Only for creating new chats
   bool _isGenerating = false;
+  bool _hasGeneratedConfig = false; // Track if we've generated config from quick create
+  String? _selectedModelSlug;
+  List<AiModelInfo> _models = const [];
+  UserPlan _plan = UserPlan.free;
+  Key _dropdownKey = UniqueKey(); // Key to force dropdown rebuild when premium is selected
   
   // Response style preferences
   late String _selectedTone;
@@ -84,6 +93,7 @@ class _ChatFormModalState extends State<ChatFormModal> {
     
     // Quick create is only available when creating new chats
     _useQuickCreate = widget.isCreating && chat == null;
+    _initModels();
   }
 
   @override
@@ -93,6 +103,40 @@ class _ChatFormModalState extends State<ChatFormModal> {
     _systemPromptController.dispose();
     _quickDescriptionController.dispose();
     super.dispose();
+  }
+
+  Future<void> _initModels() async {
+    try {
+      final catalog = ModelCatalogService();
+      final ent = EntitlementsService();
+      final results = await Future.wait([
+        catalog.listEnabledModels(),
+        ent.getCurrentUserPlan(),
+      ]);
+      _models = (results[0] as List<AiModelInfo>);
+      _plan = results[1] as UserPlan;
+
+      // Determine initial model: existing chat.model or first basic
+      final existing = widget.chat?.model;
+      if (existing != null && existing.isNotEmpty) {
+        _selectedModelSlug = existing;
+      } else {
+        final basic = _models.firstWhere(
+          (m) => !m.isPremium,
+          orElse: () => _models.isNotEmpty ? _models.first : AiModelInfo(
+            id: '00000000-0000-0000-0000-000000000000',
+            slug: 'openrouter:env-default',
+            displayName: 'Basic Model',
+            tier: 'basic',
+            enabled: true,
+          ),
+        );
+        _selectedModelSlug = basic.slug;
+      }
+    } catch (_) {
+      // leave defaults; _selectedModelSlug stays null
+    }
+    if (mounted) setState(() {});
   }
 
   Future<void> _generateFromDescription() async {
@@ -122,16 +166,16 @@ class _ChatFormModalState extends State<ChatFormModal> {
         _shortDescriptionController.text = result['shortDescription'] as String;
         _systemPromptController.text = result['systemPrompt'] as String;
         
-        // Switch to manual mode to show the filled form
+        // Show preview in quick create mode, don't switch to manual
         setState(() {
-          _useQuickCreate = false;
+          _hasGeneratedConfig = true;
           _isGenerating = false;
         });
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('AI configuration generated! Review and customize if needed.'),
+              content: Text('AI configuration generated! Review and create, or customize further.'),
               duration: Duration(seconds: 3),
             ),
           );
@@ -191,60 +235,84 @@ class _ChatFormModalState extends State<ChatFormModal> {
   }
 
   Future<void> _handleSave() async {
-    if (_formKey.currentState!.validate()) {
-      setState(() {
-        _isSaving = true;
-      });
-
-      try {
-        String? avatarUrl = widget.chat?.avatarUrl;
-
-        // Upload new avatar if selected
-        if (_selectedImagePath != null) {
-          if (widget.isCreating) {
-            // For new chats, we'll need a temporary ID
-            avatarUrl = await _storageService.uploadAvatar(
-              _selectedImagePath!,
-              DateTime.now().millisecondsSinceEpoch.toString(),
-            );
-          } else {
-            avatarUrl = await _storageService.updateAvatar(
-              _selectedImagePath!,
-              widget.chat!.id,
-              widget.chat!.avatarUrl,
-            );
-          }
-        }
-
-        await widget.onSave(
-          name: _nameController.text.trim(),
-          shortDescription: _shortDescriptionController.text.trim(),
-          systemPrompt: _systemPromptController.text.trim(),
-          avatarUrl: avatarUrl,
-          responseTone: _selectedTone,
-          responseLength: _selectedLength,
-          writingStyle: _selectedStyle,
-          useEmojis: _useEmojis,
+    // In quick create preview mode, validate manually since form fields aren't rendered
+    final isQuickCreatePreview = _useQuickCreate && _hasGeneratedConfig && widget.isCreating;
+    
+    if (isQuickCreatePreview) {
+      // Manual validation for quick create preview
+      final name = _nameController.text.trim();
+      final shortDesc = _shortDescriptionController.text.trim();
+      final systemPrompt = _systemPromptController.text.trim();
+      
+      if (name.isEmpty || shortDesc.isEmpty || systemPrompt.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please ensure all required fields are filled'),
+            duration: Duration(seconds: 2),
+          ),
         );
+        return;
+      }
+    } else {
+      // Normal form validation for manual mode
+      if (!_formKey.currentState!.validate()) {
+        return;
+      }
+    }
 
-        if (mounted) {
-          Navigator.pop(context);
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Failed to save: $e'),
-              duration: const Duration(seconds: 3),
-            ),
+    setState(() {
+      _isSaving = true;
+    });
+
+    try {
+      String? avatarUrl = widget.chat?.avatarUrl;
+
+      // Upload new avatar if selected
+      if (_selectedImagePath != null) {
+        if (widget.isCreating) {
+          // For new chats, we'll need a temporary ID
+          avatarUrl = await _storageService.uploadAvatar(
+            _selectedImagePath!,
+            DateTime.now().millisecondsSinceEpoch.toString(),
+          );
+        } else {
+          avatarUrl = await _storageService.updateAvatar(
+            _selectedImagePath!,
+            widget.chat!.id,
+            widget.chat!.avatarUrl,
           );
         }
-      } finally {
-        if (mounted) {
-          setState(() {
-            _isSaving = false;
-          });
-        }
+      }
+
+      await widget.onSave(
+        name: _nameController.text.trim(),
+        shortDescription: _shortDescriptionController.text.trim(),
+        systemPrompt: _systemPromptController.text.trim(),
+        model: (_selectedModelSlug ?? widget.chat?.model ?? ''),
+        avatarUrl: avatarUrl,
+        responseTone: _selectedTone,
+        responseLength: _selectedLength,
+        writingStyle: _selectedStyle,
+        useEmojis: _useEmojis,
+      );
+
+      if (mounted) {
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to save: $e'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
       }
     }
   }
@@ -259,17 +327,19 @@ class _ChatFormModalState extends State<ChatFormModal> {
       padding: EdgeInsets.only(
         bottom: mediaQuery.viewInsets.bottom,
       ),
-      child: Container(
-        constraints: BoxConstraints(
-          maxHeight: mediaQuery.size.height * 0.9,
-        ),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surface,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
+      child: SafeArea(
+        top: false,
+        child: Container(
+          constraints: BoxConstraints(
+            maxHeight: mediaQuery.size.height * 0.9,
+          ),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
             // Handle bar
             Container(
               margin: const EdgeInsets.only(top: 12),
@@ -283,53 +353,15 @@ class _ChatFormModalState extends State<ChatFormModal> {
             
             // Title
             Padding(
-              padding: const EdgeInsets.all(20),
-              child: Row(
-                children: [
-                  Icon(
-                    isCreating ? Icons.smart_toy_outlined : Icons.edit_outlined,
-                    color: theme.colorScheme.primary,
-                    size: 28,
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    isCreating ? 'Create New AI Chat' : 'Edit Chat Settings',
-                    style: theme.textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
+              padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
+              child: Text(
+                isCreating ? 'Create AI Chat' : 'Edit Settings',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
             const Divider(height: 1),
-            
-            // Mode Toggle (only show when creating)
-            if (isCreating && widget.chat == null) ...[
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                child: SegmentedButton<bool>(
-                  segments: const [
-                    ButtonSegment<bool>(
-                      value: false,
-                      label: Text('Manual Setup'),
-                      icon: Icon(Icons.edit_outlined, size: 18),
-                    ),
-                    ButtonSegment<bool>(
-                      value: true,
-                      label: Text('Quick Create'),
-                      icon: Icon(Icons.auto_awesome_outlined, size: 18),
-                    ),
-                  ],
-                  selected: {_useQuickCreate},
-                  onSelectionChanged: (Set<bool> selected) {
-                    setState(() {
-                      _useQuickCreate = selected.first;
-                    });
-                  },
-                ),
-              ),
-              const Divider(height: 1),
-            ],
             
             // Scrollable Form content
             Flexible(
@@ -341,95 +373,145 @@ class _ChatFormModalState extends State<ChatFormModal> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      // Quick Create Mode
+                      // Quick Create Mode (primary interface for creating)
                       if (_useQuickCreate && isCreating) ...[
-                        Icon(
-                          Icons.auto_awesome_outlined,
-                          size: 48,
-                          color: theme.colorScheme.primary.withOpacity(0.7),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'Describe your AI assistant',
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w600,
+                        // Show input form if not generated yet, or preview if generated
+                        if (!_hasGeneratedConfig) ...[
+                          const SizedBox(height: 8),
+                          TextFormField(
+                            controller: _quickDescriptionController,
+                            autofocus: true,
+                            decoration: InputDecoration(
+                              labelText: 'What AI do you want?',
+                              hintText: 'e.g., A fitness coach, A cooking assistant, A study buddy',
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              filled: true,
+                              fillColor: theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
+                            ),
+                            maxLines: 3,
+                            textInputAction: TextInputAction.done,
+                            onFieldSubmitted: (_) => _generateFromDescription(),
                           ),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Tell us what kind of AI you want, and we\'ll configure it for you',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: theme.colorScheme.onSurface.withOpacity(0.7),
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 24),
-                        TextFormField(
-                          controller: _quickDescriptionController,
-                          decoration: InputDecoration(
-                            labelText: 'What AI do you want?',
-                            hintText: 'e.g., A coding assistant for Flutter, A creative writing helper, A research assistant',
-                            prefixIcon: const Icon(Icons.chat_bubble_outline),
-                            border: const OutlineInputBorder(),
-                            helperText: 'Describe in a few words what you want the AI to help you with',
-                            helperMaxLines: 2,
-                          ),
-                          maxLines: 3,
-                          textInputAction: TextInputAction.done,
-                          onFieldSubmitted: (_) => _generateFromDescription(),
-                        ),
-                        const SizedBox(height: 16),
-                        FilledButton.icon(
-                          onPressed: _isGenerating ? null : _generateFromDescription,
-                          icon: _isGenerating
-                              ? const SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.auto_awesome),
-                          label: Text(_isGenerating ? 'Generating...' : 'Generate AI Configuration'),
-                          style: FilledButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Divider(
-                                color: theme.colorScheme.outlineVariant,
+                          const SizedBox(height: 16),
+                          FilledButton.icon(
+                            onPressed: _isGenerating ? null : _generateFromDescription,
+                            icon: _isGenerating
+                                ? const SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.auto_awesome),
+                            label: const Text('Create'),
+                            style: FilledButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
                               ),
                             ),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 16),
-                              child: Text(
-                                'OR',
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: theme.colorScheme.onSurface.withOpacity(0.6),
+                          ),
+                          const SizedBox(height: 12),
+                          TextButton(
+                            onPressed: _isGenerating ? null : () {
+                              setState(() {
+                                _useQuickCreate = false;
+                              });
+                            },
+                            child: const Text('Advanced Setup'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: theme.colorScheme.onSurface.withOpacity(0.6),
+                            ),
+                          ),
+                        ] else ...[
+                          // Preview after generation - allow quick create or customize
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primaryContainer.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: theme.colorScheme.primary.withOpacity(0.2),
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _nameController.text,
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  _shortDescriptionController.text,
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: theme.colorScheme.onSurface.withOpacity(0.7),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton(
+                                  onPressed: _isSaving ? null : () {
+                                    setState(() {
+                                      _hasGeneratedConfig = false;
+                                      _quickDescriptionController.clear();
+                                    });
+                                  },
+                                  child: const Text('Recreate'),
+                                  style: OutlinedButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(vertical: 16),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
-                            Expanded(
-                              child: Divider(
-                                color: theme.colorScheme.outlineVariant,
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: FilledButton(
+                                  onPressed: _isSaving ? null : _handleSave,
+                                  style: FilledButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(vertical: 16),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  child: _isSaving
+                                      ? const SizedBox(
+                                          height: 20,
+                                          width: 20,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Text('Confirm'),
+                                ),
                               ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          TextButton(
+                            onPressed: () {
+                              setState(() {
+                                _useQuickCreate = false;
+                              });
+                            },
+                            child: const Text('Customize'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: theme.colorScheme.onSurface.withOpacity(0.7),
                             ),
-                          ],
-                        ),
-                        const SizedBox(height: 24),
-                        OutlinedButton.icon(
-                          onPressed: () {
-                            setState(() {
-                              _useQuickCreate = false;
-                            });
-                          },
-                          icon: const Icon(Icons.edit_outlined),
-                          label: const Text('Switch to Manual Setup'),
-                        ),
+                          ),
+                        ],
                       ] else ...[
                         // Manual Setup Mode (existing form)
                         // Avatar picker
@@ -496,7 +578,6 @@ class _ChatFormModalState extends State<ChatFormModal> {
                         decoration: const InputDecoration(
                           labelText: 'Chat Name',
                           hintText: 'e.g., Code Assistant, Writing Helper',
-                          prefixIcon: Icon(Icons.person_outline),
                           border: OutlineInputBorder(),
                         ),
                         validator: (value) {
@@ -514,9 +595,6 @@ class _ChatFormModalState extends State<ChatFormModal> {
                         decoration: const InputDecoration(
                           labelText: 'Short Description',
                           hintText: 'e.g., Your programming companion for coding help',
-                          helperText: 'Brief description shown under the AI name (visible to users)',
-                          helperMaxLines: 2,
-                          prefixIcon: Icon(Icons.description_outlined),
                           border: OutlineInputBorder(),
                         ),
                         maxLines: 2,
@@ -535,9 +613,6 @@ class _ChatFormModalState extends State<ChatFormModal> {
                         decoration: const InputDecoration(
                           labelText: 'System Prompt',
                           hintText: 'e.g., You are an expert coding assistant specialized in Flutter and Dart',
-                          helperText: 'Define the AI\'s personality and expertise (not shown to users)',
-                          helperMaxLines: 2,
-                          prefixIcon: Icon(Icons.psychology_outlined),
                           border: OutlineInputBorder(),
                         ),
                         maxLines: 4,
@@ -580,7 +655,7 @@ class _ChatFormModalState extends State<ChatFormModal> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      'Response Style Settings',
+                                      'Advanced Settings',
                                       style: theme.textTheme.titleSmall?.copyWith(
                                         fontWeight: FontWeight.w600,
                                         color: theme.colorScheme.onSurface,
@@ -588,7 +663,7 @@ class _ChatFormModalState extends State<ChatFormModal> {
                                     ),
                                     const SizedBox(height: 2),
                                     Text(
-                                      'Customize tone, length, and style',
+                                      'Customize response style and preferences',
                                       style: theme.textTheme.bodySmall?.copyWith(
                                         color: theme.colorScheme.onSurface.withOpacity(0.6),
                                       ),
@@ -607,8 +682,138 @@ class _ChatFormModalState extends State<ChatFormModal> {
                         ),
                       ),
                       
-                      // Expandable Response Style Section
+                      // Expandable Advanced Settings Section
                       if (_showAdvancedSettings) ...[
+                        const SizedBox(height: 16),
+                        
+                        // Model selector (DB-driven) - shows all models, disables premium for Free
+                        if (_models.isEmpty)
+                          const SizedBox.shrink()
+                        else ...[
+                          Builder(builder: (context) {
+                            // Determine allowed models (for value validation)
+                            final allowed = _plan == UserPlan.pro
+                                ? _models
+                                : _models.where((m) => !m.isPremium).toList();
+                            
+                            if (allowed.isEmpty) {
+                              return const SizedBox.shrink();
+                            }
+                            
+                            // Ensure selected value exists in allowed list to avoid assertion errors
+                            final allowedSlugs = allowed.map((m) => m.slug).toSet();
+                            final currentValue = (_selectedModelSlug != null && allowedSlugs.contains(_selectedModelSlug))
+                                ? _selectedModelSlug!
+                                : allowed.first.slug;
+
+                            // Build items list - show all models with visual indicators
+                            // Premium items are enabled but will open upgrade page when selected by Free users
+                            final dropdownItems = <DropdownMenuItem<String>>[];
+                            for (final m in _models) {
+                              final isPremium = m.isPremium;
+                              final isLockedForUser = isPremium && _plan == UserPlan.free;
+                              dropdownItems.add(
+                                DropdownMenuItem<String>(
+                                  value: m.slug,
+                                  enabled: true, // Always enabled so users can tap it
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (isLockedForUser) ...[
+                                        Icon(
+                                          Icons.lock_outline,
+                                          size: 16,
+                                          color: theme.colorScheme.primary,
+                                        ),
+                                        const SizedBox(width: 8),
+                                      ],
+                                      Flexible(
+                                        child: Text(
+                                          m.displayName,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: isLockedForUser
+                                                ? theme.colorScheme.primary
+                                                : theme.colorScheme.onSurface,
+                                            fontWeight: isLockedForUser ? FontWeight.w600 : FontWeight.normal,
+                                          ),
+                                        ),
+                                      ),
+                                      if (isPremium && !isLockedForUser) ...[
+                                        const SizedBox(width: 8),
+                                        Icon(
+                                          Icons.workspace_premium,
+                                          size: 16,
+                                          color: theme.colorScheme.primary,
+                                        ),
+                                      ],
+                                      if (isLockedForUser) ...[
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          'Pro',
+                                          style: theme.textTheme.bodySmall?.copyWith(
+                                            color: theme.colorScheme.primary,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }
+
+                            return DropdownButtonFormField<String>(
+                              key: _dropdownKey,
+                              value: currentValue,
+                              decoration: const InputDecoration(
+                                labelText: 'Model',
+                                border: OutlineInputBorder(),
+                              ),
+                              items: dropdownItems,
+                              onChanged: (v) {
+                                if (v == null) return;
+                                try {
+                                  final selectedModel = _models.firstWhere(
+                                    (m) => m.slug == v,
+                                    orElse: () => _models.first,
+                                  );
+                                  // If Free user selects premium model, prevent selection and open upgrade page
+                                  if (selectedModel.isPremium && _plan == UserPlan.free) {
+                                    // Force dropdown to rebuild with original value by changing key
+                                    setState(() {
+                                      _dropdownKey = UniqueKey();
+                                    });
+                                    // Small delay to let dropdown close smoothly
+                                    Future.delayed(const Duration(milliseconds: 300), () {
+                                      if (context.mounted) {
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (context) => const ProUpgradePage(),
+                                          ),
+                                        );
+                                      }
+                                    });
+                                    return;
+                                  }
+                                  setState(() {
+                                    _selectedModelSlug = v;
+                                  });
+                                } catch (e) {
+                                  // Silently handle errors
+                                }
+                              },
+                              validator: (v) {
+                                if ((v == null || v.trim().isEmpty) && widget.isCreating) {
+                                  return 'Please select a model';
+                                }
+                                return null;
+                              },
+                            );
+                          }),
+                        ],
                         const SizedBox(height: 16),
                         
                         // Response Tone
@@ -616,7 +821,6 @@ class _ChatFormModalState extends State<ChatFormModal> {
                           initialValue: _selectedTone,
                           decoration: const InputDecoration(
                             labelText: 'Tone',
-                            prefixIcon: Icon(Icons.mood_outlined),
                             border: OutlineInputBorder(),
                           ),
                           items: const [
@@ -641,7 +845,6 @@ class _ChatFormModalState extends State<ChatFormModal> {
                           initialValue: _selectedLength,
                           decoration: const InputDecoration(
                             labelText: 'Response Length',
-                            prefixIcon: Icon(Icons.short_text_outlined),
                             border: OutlineInputBorder(),
                           ),
                           items: const [
@@ -664,7 +867,6 @@ class _ChatFormModalState extends State<ChatFormModal> {
                           initialValue: _selectedStyle,
                           decoration: const InputDecoration(
                             labelText: 'Writing Style',
-                            prefixIcon: Icon(Icons.edit_note_outlined),
                             border: OutlineInputBorder(),
                           ),
                           items: const [
@@ -703,47 +905,72 @@ class _ChatFormModalState extends State<ChatFormModal> {
                       
                       const SizedBox(height: 20),
                       
-                      // Action Buttons (only show in manual mode or when editing)
+                      // Action Buttons (show in manual mode or when editing)
                       if (!_useQuickCreate || !isCreating)
-                        Row(
+                        Column(
                           children: [
-                            Expanded(
-                              child: OutlinedButton(
-                                onPressed: _isSaving ? null : () => Navigator.pop(context),
-                                child: const Text('Cancel'),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              flex: 2,
-                              child: FilledButton.icon(
-                                onPressed: _isSaving ? null : _handleSave,
-                                icon: _isSaving
-                                    ? const SizedBox(
-                                        width: 16,
-                                        height: 16,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : Icon(isCreating ? Icons.add : Icons.check),
-                                label: Text(
-                                  _isSaving 
-                                      ? (isCreating ? 'Creating...' : 'Saving...')
-                                      : (isCreating ? 'Create AI' : 'Save Changes'),
+                            // Show "Back to Quick Create" link when in manual mode for new chats
+                            if (isCreating && widget.chat == null) ...[
+                              TextButton(
+                                onPressed: () {
+                                  setState(() {
+                                    _useQuickCreate = true;
+                                    _hasGeneratedConfig = false;
+                                  });
+                                },
+                                child: const Text('Quick Create'),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: theme.colorScheme.primary,
                                 ),
                               ),
+                              const SizedBox(height: 8),
+                            ],
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton(
+                                    onPressed: _isSaving ? null : () => Navigator.pop(context),
+                                    child: const Text('Cancel'),
+                                    style: OutlinedButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(vertical: 16),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: FilledButton(
+                                    onPressed: _isSaving ? null : _handleSave,
+                                    style: FilledButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(vertical: 16),
+                                    ),
+                                    child: _isSaving
+                                        ? const SizedBox(
+                                            height: 20,
+                                            width: 20,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          )
+                                        : Text(
+                                            _isSaving 
+                                                ? (isCreating ? 'Creating...' : 'Saving...')
+                                                : (isCreating ? 'Create' : 'Save'),
+                                          ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
                       ],
-                      SizedBox(height: mediaQuery.padding.bottom + 8),
+                      const SizedBox(height: 8),
                     ],
                   ),
                 ),
               ),
             ),
           ],
+        ),
         ),
       ),
     );

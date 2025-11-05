@@ -4,6 +4,8 @@ import 'package:traitus/models/chat_message.dart';
 import 'package:traitus/services/openrouter_api.dart';
 import 'package:traitus/services/database_service.dart';
 import 'package:traitus/providers/chats_list_provider.dart';
+import 'package:traitus/services/entitlements_service.dart';
+import 'package:traitus/services/models_service.dart';
 
 class ChatProvider extends ChangeNotifier {
   ChatProvider({
@@ -35,7 +37,7 @@ class ChatProvider extends ChangeNotifier {
   final OpenRouterApi _api;
   final DatabaseService _dbService = DatabaseService();
   final String _chatId;
-  final String _model;
+  String _model;
   final String _systemPrompt;
   final ChatsListProvider? _chatsListProvider; // For accessing message cache
 
@@ -54,6 +56,45 @@ class ChatProvider extends ChangeNotifier {
   bool get isLoadingOlder => _isLoadingOlder;
   bool get hasMoreMessages => _hasMoreMessages;
   bool get hasMessages => _messages.where((m) => m.role != ChatRole.system).isNotEmpty;
+  String get currentModel => _model;
+
+  void setModel(String model) {
+    if (model.trim().isEmpty) return;
+    _model = model.trim();
+    notifyListeners();
+  }
+
+  Future<void> _ensureModelAllowed() async {
+    try {
+      final entitlements = EntitlementsService();
+      final plan = await entitlements.getCurrentUserPlan();
+      if (plan == UserPlan.pro) return; // Pro can use premium
+
+      final catalog = ModelCatalogService();
+      final models = await catalog.listEnabledModels();
+      final current = models.firstWhere(
+        (m) => m.slug == _model,
+        orElse: () => models.isNotEmpty ? models.first : AiModelInfo(
+          id: '00000000-0000-0000-0000-000000000000',
+          slug: _model,
+          displayName: 'Current',
+          tier: 'basic',
+          enabled: true,
+        ),
+      );
+      if (current.isPremium) {
+        // Fallback to first basic model
+        final basic = models.firstWhere(
+          (m) => !m.isPremium,
+          orElse: () => current,
+        );
+        _model = basic.slug;
+        notifyListeners();
+      }
+    } catch (_) {
+      // Safe no-op on failure
+    }
+  }
 
   Future<void> _loadMessages() async {
     if (_chatId.isEmpty) return;
@@ -163,6 +204,9 @@ class ChatProvider extends ChangeNotifier {
   Future<void> sendUserMessage(String content) async {
     if (content.trim().isEmpty || _isSending) return;
 
+    // Ensure selected model is allowed for current plan
+    await _ensureModelAllowed();
+
     final userMessage = ChatMessage(role: ChatRole.user, content: content);
     _messages.add(userMessage);
     
@@ -200,9 +244,6 @@ class ChatProvider extends ChangeNotifier {
           break;
         }
 
-        // Console log each chunk as it arrives from OpenRouter
-        debugPrint('📦 Chunk: $chunk');
-
         // Append chunk to full response
         fullResponse += chunk;
         
@@ -218,11 +259,6 @@ class ChatProvider extends ChangeNotifier {
           );
           notifyListeners(); // Update UI with each chunk
         }
-      }
-
-      // Console log the bot's complete reply
-      if (fullResponse.isNotEmpty) {
-        debugPrint('🤖 Bot Reply (Complete): $fullResponse');
       }
 
       if (_isStopped) {

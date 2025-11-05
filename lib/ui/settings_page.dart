@@ -4,7 +4,9 @@ import 'package:provider/provider.dart';
 import 'package:traitus/providers/auth_provider.dart';
 import 'package:traitus/providers/theme_provider.dart';
 import 'package:traitus/ui/onboarding_page.dart';
+import 'package:traitus/ui/pro_upgrade_page.dart';
 import 'package:traitus/services/storage_service.dart';
+import 'package:traitus/services/entitlements_service.dart' show EntitlementsService, UserPlan;
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key, this.isInTabView = false});
@@ -227,6 +229,60 @@ class _SettingsPageState extends State<SettingsPage> {
                     onTap: () => themeProvider.setThemeMode(ThemeMode.system),
                   ),
                 ],
+              );
+            },
+          ),
+          const Divider(),
+          
+          // Subscription Section
+          _SectionHeader(title: 'Subscription'),
+          FutureBuilder<UserPlan>(
+            future: EntitlementsService().getCurrentUserPlan(),
+            builder: (context, snapshot) {
+              final plan = snapshot.data ?? UserPlan.free;
+              final isPro = plan == UserPlan.pro;
+              
+              return ListTile(
+                leading: Icon(
+                  isPro ? Icons.workspace_premium : Icons.account_circle,
+                  color: isPro 
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                ),
+                title: Text(
+                  isPro ? 'Pro Plan' : 'Free Plan',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: isPro 
+                        ? Theme.of(context).colorScheme.primary
+                        : null,
+                  ),
+                ),
+                subtitle: Text(
+                  isPro 
+                      ? 'You have access to all premium models'
+                      : 'Upgrade to unlock premium models',
+                ),
+                trailing: isPro
+                    ? Icon(
+                        Icons.check_circle,
+                        color: Theme.of(context).colorScheme.primary,
+                      )
+                    : Icon(
+                        Icons.arrow_forward_ios,
+                        size: 16,
+                        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.4),
+                      ),
+                onTap: isPro
+                    ? null
+                    : () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const ProUpgradePage(),
+                          ),
+                        );
+                      },
               );
             },
           ),

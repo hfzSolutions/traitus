@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:traitus/config/default_ai_config.dart';
 import 'package:traitus/models/ai_chat.dart';
 import 'package:traitus/models/chat_message.dart';
@@ -304,7 +305,7 @@ class DatabaseService {
       if (response == null) return null;
       return UserProfile.fromJson(response);
     } catch (e) {
-      print('Error fetching user profile: $e');
+      debugPrint('Error fetching user profile: $e');
       return null;
     }
   }
@@ -429,7 +430,7 @@ class DatabaseService {
             avatarUrl: config['avatar'] as String,
           ));
         } catch (e) {
-          print('Error creating chat $chatId: $e');
+          debugPrint('Error creating chat $chatId: $e');
           // Continue even if one chat fails
         }
       }

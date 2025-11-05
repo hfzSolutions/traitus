@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as supabase_storage;
 import 'package:traitus/services/supabase_service.dart';
 
@@ -66,7 +67,7 @@ class StorageService {
       await _client.storage.from(bucketName).remove([filePath]);
     } catch (e) {
       // Silently fail - the file might already be deleted
-      print('Failed to delete avatar: $e');
+      debugPrint('Failed to delete avatar: $e');
     }
   }
 
