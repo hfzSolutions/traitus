@@ -7,6 +7,7 @@ import 'package:traitus/providers/chats_list_provider.dart';
 import 'package:traitus/ui/chat_page.dart';
 import 'package:traitus/ui/notes_page.dart';
 import 'package:traitus/ui/widgets/chat_form_modal.dart';
+import 'package:traitus/ui/widgets/app_avatar.dart';
 
 class ChatListPage extends StatelessWidget {
   const ChatListPage({super.key, this.isInTabView = false});
@@ -68,33 +69,41 @@ class ChatListPage extends StatelessWidget {
           final chats = chatsProvider.chats;
 
           if (chats.isEmpty) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.chat_bubble_outline,
-                      size: 64,
-                      color: theme.colorScheme.primary.withOpacity(0.5),
+            return RefreshIndicator(
+              onRefresh: () => context.read<ChatsListProvider>().refreshChats(),
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const SizedBox(height: 120),
+                        Icon(
+                          Icons.chat_bubble_outline,
+                          size: 64,
+                          color: theme.colorScheme.primary.withOpacity(0.5),
+                        ),
+                        const SizedBox(height: 24),
+                        Text(
+                          'No chats yet',
+                          style: theme.textTheme.headlineSmall?.copyWith(
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Pull to refresh or start a conversation with your AI assistant',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.onSurface.withOpacity(0.6),
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 120),
+                      ],
                     ),
-                    const SizedBox(height: 24),
-                    Text(
-                      'No chats yet',
-                      style: theme.textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Start a conversation with your AI assistant',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.onSurface.withOpacity(0.6),
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
+                  ),
                 ),
               ),
             );
@@ -105,13 +114,15 @@ class ChatListPage extends StatelessWidget {
           final unpinnedChats = chats.where((c) => !c.isPinned).toList();
           final hasBothSections = pinnedChats.isNotEmpty && unpinnedChats.isNotEmpty;
 
-          return ReorderableListView.builder(
-            itemCount: chats.length,
-            onReorder: (oldIndex, newIndex) {
-              chatsProvider.reorderChats(oldIndex, newIndex);
-            },
-            itemBuilder: (context, index) {
-              final chat = chats[index];
+          return RefreshIndicator(
+            onRefresh: () => context.read<ChatsListProvider>().refreshChats(),
+            child: ReorderableListView.builder(
+              itemCount: chats.length,
+              onReorder: (oldIndex, newIndex) {
+                chatsProvider.reorderChats(oldIndex, newIndex);
+              },
+              itemBuilder: (context, index) {
+                final chat = chats[index];
               
               // Add section header for unpinned chats if there are pinned chats
               Widget? sectionHeader;
@@ -121,33 +132,43 @@ class ChatListPage extends StatelessWidget {
                 sectionHeader = _SectionHeader(title: 'Pinned');
               }
 
-              return Column(
-                key: Key(chat.id),
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (sectionHeader != null) sectionHeader,
-                  _ChatListItem(
-                    chat: chat,
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => ChangeNotifierProvider(
-                            create: (_) => ChatProvider(
-                              chatId: chat.id,
-                              model: chat.model,
-                              systemPrompt: chat.getEnhancedSystemPrompt(),
+                return Column(
+                  key: Key(chat.id),
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (sectionHeader != null) sectionHeader,
+                    _ChatListItem(
+                      chat: chat,
+                      onTap: () {
+                        final chatsProvider = context.read<ChatsListProvider>();
+                        chatsProvider.setActiveChat(chat.id);
+                        chatsProvider.markChatAsRead(chat.id);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => ChangeNotifierProvider(
+                              create: (_) => ChatProvider(
+                                chatId: chat.id,
+                                model: chat.model,
+                                systemPrompt: chat.getEnhancedSystemPrompt(),
+                                chatsListProvider: chatsProvider, // Pass cache provider
+                              ),
+                              child: ChatPage(chatId: chat.id),
                             ),
-                            child: ChatPage(chatId: chat.id),
                           ),
-                        ),
-                      );
-                    },
-                    formatTime: _formatTime,
-                  ),
-                ],
-              );
-            },
+                        ).then((_) {
+                          // Clear active chat when returning to chat list
+                          if (context.mounted) {
+                            chatsProvider.setActiveChat(null);
+                          }
+                        });
+                      },
+                      formatTime: _formatTime,
+                    ),
+                  ],
+                );
+              },
+            ),
           );
         },
       ),
@@ -168,7 +189,8 @@ class ChatListPage extends StatelessWidget {
         isCreating: true,
         onSave: ({
           required String name,
-          required String description,
+          required String shortDescription,
+          required String systemPrompt,
           String? avatarUrl,
           required String responseTone,
           required String responseLength,
@@ -182,7 +204,8 @@ class ChatListPage extends StatelessWidget {
 
           final newChat = AiChat(
             name: name,
-            description: description,
+            shortDescription: shortDescription,
+            systemPrompt: systemPrompt,
             model: model,
             avatarUrl: avatarUrl,
             responseTone: responseTone,
@@ -320,39 +343,14 @@ class _ChatListItem extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
                   child: Row(
                     children: [
-                      // Avatar - serves as drag handle
-                      ReorderableDragStartListener(
+                      // Avatar - serves as delayed drag handle (long-press only)
+                      ReorderableDelayedDragStartListener(
                         index: chatsProvider.chats.indexOf(chat),
-                        child: Container(
-                          width: 56,
-                          height: 56,
-                          decoration: BoxDecoration(
-                            color: theme.colorScheme.primaryContainer,
-                            shape: BoxShape.circle,
-                          ),
-                          child: chat.avatarUrl != null && chat.avatarUrl!.isNotEmpty
-                              ? ClipOval(
-                                  child: Image.network(
-                                    chat.avatarUrl!,
-                                    width: 56,
-                                    height: 56,
-                                    fit: BoxFit.cover,
-                                    cacheWidth: 112,
-                                    cacheHeight: 112,
-                                    errorBuilder: (context, error, stackTrace) {
-                                      return Icon(
-                                        Icons.smart_toy_outlined,
-                                        size: 28,
-                                        color: theme.colorScheme.onPrimaryContainer,
-                                      );
-                                    },
-                                  ),
-                                )
-                              : Icon(
-                                  Icons.smart_toy_outlined,
-                                  size: 28,
-                                  color: theme.colorScheme.onPrimaryContainer,
-                                ),
+                        child: AppAvatar(
+                          size: 56,
+                          name: chat.name,
+                          imageUrl: chat.avatarUrl,
+                          isCircle: true,
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -379,7 +377,9 @@ class _ChatListItem extends StatelessWidget {
                                         child: Text(
                                           chat.name,
                                           style: theme.textTheme.titleMedium?.copyWith(
-                                            fontWeight: FontWeight.w600,
+                                            fontWeight: (chat.unreadCount > 0)
+                                                ? FontWeight.w700
+                                                : FontWeight.w600,
                                           ),
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
@@ -388,23 +388,46 @@ class _ChatListItem extends StatelessWidget {
                                     ],
                                   ),
                                 ),
-                                if (chat.lastMessageTime != null) ...[
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    formatTime(chat.lastMessageTime),
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: theme.colorScheme.onSurface.withOpacity(0.6),
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ],
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (chat.lastMessageTime != null) ...[
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        formatTime(chat.lastMessageTime),
+                                        style: theme.textTheme.bodySmall?.copyWith(
+                                          color: theme.colorScheme.onSurface.withOpacity(0.6),
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                    if (chat.unreadCount > 0) ...[
+                                      const SizedBox(width: 8),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: theme.colorScheme.primary,
+                                          borderRadius: BorderRadius.circular(10),
+                                        ),
+                                        child: Text(
+                                          chat.unreadCount > 99 ? '99+' : '${chat.unreadCount}',
+                                          style: theme.textTheme.labelSmall?.copyWith(
+                                            color: theme.colorScheme.onPrimary,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
                               ],
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              chat.lastMessage ?? chat.description,
+                              chat.lastMessage ?? chat.shortDescription,
                               style: theme.textTheme.bodyMedium?.copyWith(
                                 color: theme.colorScheme.onSurface.withOpacity(0.7),
+                                fontWeight: chat.unreadCount > 0 ? FontWeight.w600 : null,
                               ),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,

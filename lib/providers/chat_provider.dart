@@ -3,6 +3,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:traitus/models/chat_message.dart';
 import 'package:traitus/services/openrouter_api.dart';
 import 'package:traitus/services/database_service.dart';
+import 'package:traitus/providers/chats_list_provider.dart';
 
 class ChatProvider extends ChangeNotifier {
   ChatProvider({
@@ -10,11 +11,13 @@ class ChatProvider extends ChangeNotifier {
     String? chatId, 
     String? model,
     String? systemPrompt,
+    ChatsListProvider? chatsListProvider, // Optional cache provider
   }) 
       : _api = api ?? OpenRouterApi(),
         _chatId = chatId ?? '',
         _model = model ?? dotenv.env['OPENROUTER_MODEL'] ?? '',
         _systemPrompt = systemPrompt ?? 'You are a helpful, concise AI assistant. Use markdown for structure.',
+        _chatsListProvider = chatsListProvider,
         _messages = <ChatMessage>[
           ChatMessage(
             role: ChatRole.system,
@@ -34,6 +37,7 @@ class ChatProvider extends ChangeNotifier {
   final String _chatId;
   final String _model;
   final String _systemPrompt;
+  final ChatsListProvider? _chatsListProvider; // For accessing message cache
 
   final List<ChatMessage> _messages;
 
@@ -58,19 +62,34 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Get total message count to determine if there are more messages
-      final totalCount = await _dbService.getMessageCount(_chatId);
+      // Try to use cached messages first (instant load!)
+      List<ChatMessage> loadedMessages = [];
+      int? totalCount;
       
-      // Load only the most recent messages initially
-      // We load in descending order and reverse to get the latest messages
-      final loadedMessages = await _dbService.fetchMessages(
-        _chatId,
-        limit: _messagesPerPage,
-        ascending: false,
-      );
+      if (_chatsListProvider != null) {
+        final cachedMessages = _chatsListProvider.getCachedMessages(_chatId);
+        final cachedCount = _chatsListProvider.getCachedMessageCount(_chatId);
+        
+        if (cachedMessages != null && cachedCount != null) {
+        // Use cached data - instant load!
+        loadedMessages = List.from(cachedMessages);
+          totalCount = cachedCount;
+        }
+      }
       
-      // Reverse to get chronological order (oldest to newest)
-      loadedMessages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      // If no cache available, load from database
+      if (loadedMessages.isEmpty) {
+        totalCount = await _dbService.getMessageCount(_chatId);
+        
+        loadedMessages = await _dbService.fetchMessages(
+          _chatId,
+          limit: _messagesPerPage,
+          ascending: false,
+        );
+        
+        // Sort chronologically (oldest to newest)
+        loadedMessages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      }
       
       _messages
         ..clear()
@@ -87,10 +106,10 @@ class ChatProvider extends ChangeNotifier {
       // Determine if there are more messages to load
       // Don't count the system message
       final nonSystemMessages = _messages.where((m) => m.role != ChatRole.system).length;
-      _hasMoreMessages = nonSystemMessages < totalCount;
+      _hasMoreMessages = nonSystemMessages < (totalCount ?? 0);
       
     } catch (e) {
-      debugPrint('Error loading messages: $e');
+      // Error loading messages
       // Keep system message on error
     } finally {
       _isLoading = false;
@@ -134,7 +153,7 @@ class ChatProvider extends ChangeNotifier {
         _hasMoreMessages = newNonSystemCount < totalCount;
       }
     } catch (e) {
-      debugPrint('Error loading older messages: $e');
+      // Error loading older messages
     } finally {
       _isLoadingOlder = false;
       notifyListeners();
@@ -150,8 +169,12 @@ class ChatProvider extends ChangeNotifier {
     // Save user message to database
     try {
       await _dbService.createMessage(_chatId, userMessage);
+      // Add to cache if available
+      if (_chatsListProvider != null) {
+        _chatsListProvider.addMessageToCache(_chatId, userMessage);
+      }
     } catch (e) {
-      debugPrint('Error saving user message: $e');
+      // Error saving user message
     }
 
     final pendingMessage = ChatMessage(role: ChatRole.assistant, content: '', isPending: true);
@@ -162,22 +185,58 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final response = await _api.createChatCompletion(
+      String fullResponse = '';
+      
+      // Use streaming for natural word-by-word response
+      await for (final chunk in _api.streamChatCompletion(
         messages: _messages
             .where((m) => !m.isPending || m.id == pendingId)
             .map((m) => m.toOpenRouterMessage())
             .toList(),
         model: _model,
-      );
+      )) {
+        // Check if generation was stopped
+        if (_isStopped) {
+          break;
+        }
 
-      if (!_isStopped) {
+        // Console log each chunk as it arrives from OpenRouter
+        debugPrint('📦 Chunk: $chunk');
+
+        // Append chunk to full response
+        fullResponse += chunk;
+        
+        // Update the pending message with accumulated content
+        final pendingIndex = _messages.indexWhere((m) => m.id == pendingId && m.isPending);
+        if (pendingIndex != -1) {
+          _messages[pendingIndex] = ChatMessage(
+            role: ChatRole.assistant,
+            content: fullResponse,
+            id: pendingId,
+            isPending: true, // Still pending until stream completes
+            model: _model,
+          );
+          notifyListeners(); // Update UI with each chunk
+        }
+      }
+
+      // Console log the bot's complete reply
+      if (fullResponse.isNotEmpty) {
+        debugPrint('🤖 Bot Reply (Complete): $fullResponse');
+      }
+
+      if (_isStopped) {
+        // User stopped generation - remove pending message
+        _messages.removeWhere((m) => m.id == pendingId && m.isPending);
+      } else if (fullResponse.isNotEmpty) {
+        // Stream completed successfully
         final pendingIndex = _messages.indexWhere((m) => m.id == pendingId && m.isPending);
         if (pendingIndex != -1) {
           final assistantMessage = ChatMessage(
             role: ChatRole.assistant,
-            content: response,
+            content: fullResponse,
             id: pendingId,
-            isPending: false,
+            isPending: false, // Mark as complete
             model: _model,
           );
           _messages[pendingIndex] = assistantMessage;
@@ -185,12 +244,16 @@ class ChatProvider extends ChangeNotifier {
           // Save assistant message to database
           try {
             await _dbService.createMessage(_chatId, assistantMessage);
+            // Add to cache if available
+            if (_chatsListProvider != null) {
+              _chatsListProvider.addMessageToCache(_chatId, assistantMessage);
+            }
           } catch (e) {
-            debugPrint('Error saving assistant message: $e');
+            // Error saving assistant message
           }
         }
       } else {
-        // Clean up pending message if stopped
+        // Empty response - clean up
         _messages.removeWhere((m) => m.id == pendingId && m.isPending);
       }
     } catch (e) {
@@ -211,7 +274,7 @@ class ChatProvider extends ChangeNotifier {
         try {
           await _dbService.createMessage(_chatId, errorMsg);
         } catch (e) {
-          debugPrint('Error saving error message: $e');
+          // Error saving error message
         }
       }
     } finally {
@@ -243,7 +306,7 @@ class ChatProvider extends ChangeNotifier {
     try {
       await _dbService.deleteMessage(_messages[lastAssistantIndex].id);
     } catch (e) {
-      debugPrint('Error deleting message from database: $e');
+      // Error deleting message from database
     }
 
     // Remove the last assistant message and any user message after it
@@ -269,7 +332,7 @@ class ChatProvider extends ChangeNotifier {
       _messages.removeWhere((m) => m.id == messageId);
       notifyListeners();
     } catch (e) {
-      debugPrint('Error deleting message: $e');
+      // Error deleting message
     }
   }
 
@@ -283,7 +346,7 @@ class ChatProvider extends ChangeNotifier {
       try {
         await _dbService.updateMessage(updatedMessage);
       } catch (e) {
-        debugPrint('Error updating message: $e');
+        // Error updating message
       }
       
       // Remove all messages after this one
@@ -292,7 +355,7 @@ class ChatProvider extends ChangeNotifier {
         try {
           await _dbService.deleteMessage(msg.id);
         } catch (e) {
-          debugPrint('Error deleting message: $e');
+          // Error deleting message
         }
       }
       _messages.removeRange(index + 1, _messages.length);
@@ -311,7 +374,7 @@ class ChatProvider extends ChangeNotifier {
     try {
       await _dbService.deleteAllMessages(_chatId);
     } catch (e) {
-      debugPrint('Error deleting messages: $e');
+      // Error deleting messages
     }
     
     _messages

@@ -30,7 +30,8 @@ class DefaultAIConfig {
       'coding': {
         'id': 'coding',
         'name': 'Coding Assistant',
-        'description': 'Your programming companion for solving coding problems',
+        'shortDescription': 'Your programming companion for solving coding problems',
+        'systemPrompt': 'You are an expert coding assistant specialized in helping developers solve programming problems, debug code, and understand technical concepts. Provide clear, accurate, and well-structured code examples and explanations.',
         'model': getModel('coding'),
         'avatar': '💻',
         'preference': 'coding',
@@ -38,7 +39,8 @@ class DefaultAIConfig {
       'creative': {
         'id': 'creative',
         'name': 'Creative Writer',
-        'description': 'Spark your creativity with story ideas and writing help',
+        'shortDescription': 'Spark your creativity with story ideas and writing help',
+        'systemPrompt': 'You are a creative writing assistant that helps users with storytelling, creative writing, and generating ideas. You provide engaging and imaginative content, help with character development, plot ideas, and writing techniques.',
         'model': getModel('creative'),
         'avatar': '✍️',
         'preference': 'creative',
@@ -46,7 +48,8 @@ class DefaultAIConfig {
       'research': {
         'id': 'research',
         'name': 'Research Assistant',
-        'description': 'Deep dive into topics and gather information',
+        'shortDescription': 'Deep dive into topics and gather information',
+        'systemPrompt': 'You are a research assistant that helps users gather information, analyze topics, and provide comprehensive insights. You present information in a clear, organized, and well-sourced manner.',
         'model': getModel('research'),
         'avatar': '🔍',
         'preference': 'research',
@@ -54,7 +57,8 @@ class DefaultAIConfig {
       'productivity': {
         'id': 'productivity',
         'name': 'Productivity Coach',
-        'description': 'Optimize your workflow and time management',
+        'shortDescription': 'Optimize your workflow and time management',
+        'systemPrompt': 'You are a productivity coach that helps users improve their time management, workflow efficiency, and organizational skills. Provide actionable advice and strategies for better productivity.',
         'model': getModel('productivity'),
         'avatar': '📈',
         'preference': 'productivity',
@@ -62,7 +66,8 @@ class DefaultAIConfig {
       'learning': {
         'id': 'learning',
         'name': 'Learning Tutor',
-        'description': 'Master new concepts with personalized explanations',
+        'shortDescription': 'Master new concepts with personalized explanations',
+        'systemPrompt': 'You are a patient and knowledgeable tutor that helps users learn new concepts. Break down complex topics into understandable parts, provide examples, and adapt your teaching style to the user\'s level.',
         'model': getModel('learning'),
         'avatar': '🎓',
         'preference': 'learning',
@@ -70,7 +75,8 @@ class DefaultAIConfig {
       'business': {
         'id': 'business',
         'name': 'Business Advisor',
-        'description': 'Strategic insights for your business decisions',
+        'shortDescription': 'Strategic insights for your business decisions',
+        'systemPrompt': 'You are a business advisor with expertise in strategy, analysis, and business development. Help users make informed decisions, analyze markets, and develop business strategies.',
         'model': getModel('business'),
         'avatar': '💼',
         'preference': 'business',
@@ -95,7 +101,7 @@ class DefaultAIConfig {
       final categoryId = entry.key;
       final config = entry.value;
       final configName = (config['name'] as String).toLowerCase();
-      final configDesc = (config['description'] as String).toLowerCase();
+      final configDesc = (config['shortDescription'] as String? ?? config['description'] as String? ?? '').toLowerCase();
       
       // Check if name or description contains category keywords
       if (lowerName.contains(configName) || 

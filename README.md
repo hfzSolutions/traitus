@@ -7,8 +7,10 @@ Modern, cloud-powered AI chat application with user authentication and persisten
 - 🔐 **User Authentication** - Secure sign up, sign in, and password reset
 - ☁️ **Cloud Storage** - All data stored in Supabase (no local storage)
 - 💬 **AI Chat** - Multiple chat conversations with different AI models
+- ⚡ **Streaming Responses** - Real-time word-by-word AI responses (like ChatGPT)
 - 🖼️ **Custom Avatars** - Personalize your AI chats with custom avatar images
 - 📝 **Notes** - Save and manage your notes
+- ⚡ **Instant Loading** - Message preloading for instant chat opening (like WhatsApp/Telegram)
 - 🎨 **Modern UI** - Material 3 design with light/dark theme support
 - 📱 **Cross-platform** - Works on iOS, Android, Web, macOS, Windows, and Linux
 
@@ -201,6 +203,9 @@ flutter run
 - [Avatar Feature Guide](AVATAR_FEATURE.md) - Custom AI avatar setup and usage
 - [Database Schema](supabase_schema.sql) - SQL schema for Supabase
 - [Model Tracking](MODEL_TRACKING.md) - AI model tracking feature details
+- [Realtime Subscription & Unread Tracking](REALTIME_SUBSCRIPTION.md) - Real-time message updates and unread indicators
+- [Message Caching & UX Improvements](MESSAGE_CACHING_AND_UX.md) - Instant chat loading, message preloading, and standard chat behavior
+- [Streaming Response Feature](STREAMING_RESPONSE_FEATURE.md) - Real-time word-by-word AI responses with streaming
 - [Flutter Documentation](https://docs.flutter.dev)
 - [Supabase Documentation](https://supabase.com/docs)
 

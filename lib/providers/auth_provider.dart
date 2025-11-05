@@ -139,8 +139,11 @@ class AuthProvider extends ChangeNotifier {
     DateTime? dateOfBirth,
     String? preferredLanguage,
     String? avatarUrl,
+    String? experienceLevel,
+    String? useContext,
     required List<String> preferences,
     required List<String> selectedChatIds,
+    List<Map<String, dynamic>>? selectedChatDefinitions,
   }) async {
     _isLoading = true;
     _error = null;
@@ -152,8 +155,11 @@ class AuthProvider extends ChangeNotifier {
         dateOfBirth: dateOfBirth,
         preferredLanguage: preferredLanguage,
         avatarUrl: avatarUrl,
+        experienceLevel: experienceLevel,
+        useContext: useContext,
         preferences: preferences,
         selectedChatIds: selectedChatIds,
+        selectedChatDefinitions: selectedChatDefinitions,
       );
     } catch (e) {
       _error = e.toString();
@@ -167,6 +173,24 @@ class AuthProvider extends ChangeNotifier {
   bool get needsOnboarding {
     return _user != null && 
            (_userProfile == null || !_userProfile!.onboardingCompleted);
+  }
+
+  /// Mark onboarding as not completed so the app routes to onboarding again
+  Future<void> redoOnboarding() async {
+    _isLoading = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      await _databaseService.resetOnboarding();
+      await _loadUserProfile();
+    } catch (e) {
+      _error = e.toString();
+      rethrow;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
   }
 
   Future<void> resetPassword(String email) async {

@@ -3,6 +3,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:traitus/providers/auth_provider.dart';
 import 'package:traitus/providers/theme_provider.dart';
+import 'package:traitus/ui/onboarding_page.dart';
 import 'package:traitus/services/storage_service.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -255,20 +256,33 @@ class _SettingsPageState extends State<SettingsPage> {
           _SectionHeader(title: 'Account'),
           Consumer<AuthProvider>(
             builder: (context, authProvider, _) {
-              return ListTile(
-                leading: Icon(
-                  Icons.logout,
-                  color: theme.colorScheme.error,
-                ),
-                title: Text(
-                  'Logout',
-                  style: TextStyle(
-                    color: theme.colorScheme.error,
-                    fontWeight: FontWeight.w500,
+              return Column(
+                children: [
+                  ListTile(
+                    leading: Icon(
+                      Icons.refresh,
+                      color: theme.colorScheme.primary,
+                    ),
+                    title: const Text('Redo Onboarding'),
+                    subtitle: const Text('Start the setup flow again'),
+                    onTap: () => _showRedoOnboardingDialog(context, authProvider),
                   ),
-                ),
-                subtitle: const Text('Sign out of your account'),
-                onTap: () => _showLogoutDialog(context, authProvider),
+                  ListTile(
+                    leading: Icon(
+                      Icons.logout,
+                      color: theme.colorScheme.error,
+                    ),
+                    title: Text(
+                      'Logout',
+                      style: TextStyle(
+                        color: theme.colorScheme.error,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    subtitle: const Text('Sign out of your account'),
+                    onTap: () => _showLogoutDialog(context, authProvider),
+                  ),
+                ],
               );
             },
           ),
@@ -302,6 +316,36 @@ class _SettingsPageState extends State<SettingsPage> {
 
     if (confirmed == true && context.mounted) {
       await authProvider.signOut();
+    }
+  }
+
+  Future<void> _showRedoOnboardingDialog(BuildContext context, AuthProvider authProvider) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Redo Onboarding'),
+        content: const Text('This will take you back to the onboarding flow. Continue?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && context.mounted) {
+      await authProvider.redoOnboarding();
+      if (context.mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const OnboardingPage()),
+          (route) => false,
+        );
+      }
     }
   }
 }

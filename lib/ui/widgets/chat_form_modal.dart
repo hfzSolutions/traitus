@@ -2,7 +2,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:traitus/models/ai_chat.dart';
+import 'package:traitus/ui/widgets/app_avatar.dart';
 import 'package:traitus/services/storage_service.dart';
+import 'package:traitus/services/openrouter_api.dart';
 
 /// Reusable modal for creating or editing AI chats
 /// 
@@ -26,7 +28,8 @@ class ChatFormModal extends StatefulWidget {
   /// Returns the updated/new chat data
   final Future<void> Function({
     required String name,
-    required String description,
+    required String shortDescription,
+    required String systemPrompt,
     String? avatarUrl,
     required String responseTone,
     required String responseLength,
@@ -44,13 +47,18 @@ class ChatFormModal extends StatefulWidget {
 class _ChatFormModalState extends State<ChatFormModal> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _nameController;
-  late final TextEditingController _descriptionController;
+  late final TextEditingController _shortDescriptionController;
+  late final TextEditingController _systemPromptController;
+  late final TextEditingController _quickDescriptionController;
   final _imagePicker = ImagePicker();
   final _storageService = StorageService();
+  final _openRouterApi = OpenRouterApi();
   
   String? _selectedImagePath;
   bool _isSaving = false;
   bool _showAdvancedSettings = false;
+  bool _useQuickCreate = false; // Only for creating new chats
+  bool _isGenerating = false;
   
   // Response style preferences
   late String _selectedTone;
@@ -64,20 +72,96 @@ class _ChatFormModalState extends State<ChatFormModal> {
     final chat = widget.chat;
     
     _nameController = TextEditingController(text: chat?.name ?? '');
-    _descriptionController = TextEditingController(text: chat?.description ?? '');
+    _shortDescriptionController = TextEditingController(text: chat?.shortDescription ?? '');
+    _systemPromptController = TextEditingController(text: chat?.systemPrompt ?? '');
+    _quickDescriptionController = TextEditingController();
     
     // Initialize response style preferences
     _selectedTone = chat?.responseTone ?? 'friendly';
     _selectedLength = chat?.responseLength ?? 'balanced';
     _selectedStyle = chat?.writingStyle ?? 'simple';
     _useEmojis = chat?.useEmojis ?? false;
+    
+    // Quick create is only available when creating new chats
+    _useQuickCreate = widget.isCreating && chat == null;
   }
 
   @override
   void dispose() {
     _nameController.dispose();
-    _descriptionController.dispose();
+    _shortDescriptionController.dispose();
+    _systemPromptController.dispose();
+    _quickDescriptionController.dispose();
     super.dispose();
+  }
+
+  Future<void> _generateFromDescription() async {
+    final description = _quickDescriptionController.text.trim();
+    if (description.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please describe what AI you want to create'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isGenerating = true;
+    });
+
+    try {
+      final result = await _openRouterApi.generateChatFromDescription(
+        userDescription: description,
+      );
+
+      if (result != null && mounted) {
+        // Auto-fill the form with generated values
+        _nameController.text = result['name'] as String;
+        _shortDescriptionController.text = result['shortDescription'] as String;
+        _systemPromptController.text = result['systemPrompt'] as String;
+        
+        // Switch to manual mode to show the filled form
+        setState(() {
+          _useQuickCreate = false;
+          _isGenerating = false;
+        });
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('AI configuration generated! Review and customize if needed.'),
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _isGenerating = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Failed to generate configuration. Please try again or use manual setup.'),
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isGenerating = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.toString()}'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _pickImage() async {
@@ -134,7 +218,8 @@ class _ChatFormModalState extends State<ChatFormModal> {
 
         await widget.onSave(
           name: _nameController.text.trim(),
-          description: _descriptionController.text.trim(),
+          shortDescription: _shortDescriptionController.text.trim(),
+          systemPrompt: _systemPromptController.text.trim(),
           avatarUrl: avatarUrl,
           responseTone: _selectedTone,
           responseLength: _selectedLength,
@@ -218,6 +303,34 @@ class _ChatFormModalState extends State<ChatFormModal> {
             ),
             const Divider(height: 1),
             
+            // Mode Toggle (only show when creating)
+            if (isCreating && widget.chat == null) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                child: SegmentedButton<bool>(
+                  segments: const [
+                    ButtonSegment<bool>(
+                      value: false,
+                      label: Text('Manual Setup'),
+                      icon: Icon(Icons.edit_outlined, size: 18),
+                    ),
+                    ButtonSegment<bool>(
+                      value: true,
+                      label: Text('Quick Create'),
+                      icon: Icon(Icons.auto_awesome_outlined, size: 18),
+                    ),
+                  ],
+                  selected: {_useQuickCreate},
+                  onSelectionChanged: (Set<bool> selected) {
+                    setState(() {
+                      _useQuickCreate = selected.first;
+                    });
+                  },
+                ),
+              ),
+              const Divider(height: 1),
+            ],
+            
             // Scrollable Form content
             Flexible(
               child: SingleChildScrollView(
@@ -228,53 +341,123 @@ class _ChatFormModalState extends State<ChatFormModal> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      // Avatar picker
+                      // Quick Create Mode
+                      if (_useQuickCreate && isCreating) ...[
+                        Icon(
+                          Icons.auto_awesome_outlined,
+                          size: 48,
+                          color: theme.colorScheme.primary.withOpacity(0.7),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Describe your AI assistant',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Tell us what kind of AI you want, and we\'ll configure it for you',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.onSurface.withOpacity(0.7),
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 24),
+                        TextFormField(
+                          controller: _quickDescriptionController,
+                          decoration: InputDecoration(
+                            labelText: 'What AI do you want?',
+                            hintText: 'e.g., A coding assistant for Flutter, A creative writing helper, A research assistant',
+                            prefixIcon: const Icon(Icons.chat_bubble_outline),
+                            border: const OutlineInputBorder(),
+                            helperText: 'Describe in a few words what you want the AI to help you with',
+                            helperMaxLines: 2,
+                          ),
+                          maxLines: 3,
+                          textInputAction: TextInputAction.done,
+                          onFieldSubmitted: (_) => _generateFromDescription(),
+                        ),
+                        const SizedBox(height: 16),
+                        FilledButton.icon(
+                          onPressed: _isGenerating ? null : _generateFromDescription,
+                          icon: _isGenerating
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.auto_awesome),
+                          label: Text(_isGenerating ? 'Generating...' : 'Generate AI Configuration'),
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Divider(
+                                color: theme.colorScheme.outlineVariant,
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16),
+                              child: Text(
+                                'OR',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurface.withOpacity(0.6),
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              child: Divider(
+                                color: theme.colorScheme.outlineVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 24),
+                        OutlinedButton.icon(
+                          onPressed: () {
+                            setState(() {
+                              _useQuickCreate = false;
+                            });
+                          },
+                          icon: const Icon(Icons.edit_outlined),
+                          label: const Text('Switch to Manual Setup'),
+                        ),
+                      ] else ...[
+                        // Manual Setup Mode (existing form)
+                        // Avatar picker
                       Center(
                         child: GestureDetector(
                           onTap: _isSaving ? null : _pickImage,
                           child: Stack(
                             children: [
-                              Container(
-                                width: 100,
-                                height: 100,
-                                decoration: BoxDecoration(
-                                  color: theme.colorScheme.primaryContainer,
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: theme.colorScheme.primary,
-                                    width: 2,
-                                  ),
-                                ),
-                                child: _selectedImagePath != null
-                                    ? ClipOval(
-                                        child: Image.file(
+                              ClipOval(
+                                child: SizedBox(
+                                  width: 100,
+                                  height: 100,
+                                  child: _selectedImagePath != null
+                                      ? Image.file(
                                           File(_selectedImagePath!),
                                           fit: BoxFit.cover,
                                           width: 100,
                                           height: 100,
+                                        )
+                                      : AppAvatar(
+                                          size: 100,
+                                          name: _nameController.text.isEmpty
+                                              ? (widget.chat?.name ?? 'A')
+                                              : _nameController.text,
+                                          imageUrl: widget.chat?.avatarUrl,
+                                          isCircle: true,
                                         ),
-                                      )
-                                    : (widget.chat?.avatarUrl != null && widget.chat!.avatarUrl!.isNotEmpty)
-                                        ? ClipOval(
-                                            child: Image.network(
-                                              widget.chat!.avatarUrl!,
-                                              fit: BoxFit.cover,
-                                              width: 100,
-                                              height: 100,
-                                              errorBuilder: (context, error, stackTrace) {
-                                                return Icon(
-                                                  Icons.smart_toy_outlined,
-                                                  size: 48,
-                                                  color: theme.colorScheme.onPrimaryContainer,
-                                                );
-                                              },
-                                            ),
-                                          )
-                                        : Icon(
-                                            Icons.smart_toy_outlined,
-                                            size: 48,
-                                            color: theme.colorScheme.onPrimaryContainer,
-                                          ),
+                                ),
                               ),
                               Positioned(
                                 bottom: 0,
@@ -325,13 +508,34 @@ class _ChatFormModalState extends State<ChatFormModal> {
                       ),
                       const SizedBox(height: 16),
                       
-                      // System Prompt
+                      // Short Description (for user view)
                       TextFormField(
-                        controller: _descriptionController,
+                        controller: _shortDescriptionController,
+                        decoration: const InputDecoration(
+                          labelText: 'Short Description',
+                          hintText: 'e.g., Your programming companion for coding help',
+                          helperText: 'Brief description shown under the AI name (visible to users)',
+                          helperMaxLines: 2,
+                          prefixIcon: Icon(Icons.description_outlined),
+                          border: OutlineInputBorder(),
+                        ),
+                        maxLines: 2,
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Please enter a short description';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      
+                      // System Prompt (for AI)
+                      TextFormField(
+                        controller: _systemPromptController,
                         decoration: const InputDecoration(
                           labelText: 'System Prompt',
                           hintText: 'e.g., You are an expert coding assistant specialized in Flutter and Dart',
-                          helperText: 'Define the AI\'s personality and expertise',
+                          helperText: 'Define the AI\'s personality and expertise (not shown to users)',
                           helperMaxLines: 2,
                           prefixIcon: Icon(Icons.psychology_outlined),
                           border: OutlineInputBorder(),
@@ -499,38 +703,40 @@ class _ChatFormModalState extends State<ChatFormModal> {
                       
                       const SizedBox(height: 20),
                       
-                      // Action Buttons
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              onPressed: _isSaving ? null : () => Navigator.pop(context),
-                              child: const Text('Cancel'),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            flex: 2,
-                            child: FilledButton.icon(
-                              onPressed: _isSaving ? null : _handleSave,
-                              icon: _isSaving
-                                  ? const SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : Icon(isCreating ? Icons.add : Icons.check),
-                              label: Text(
-                                _isSaving 
-                                    ? (isCreating ? 'Creating...' : 'Saving...')
-                                    : (isCreating ? 'Create AI' : 'Save Changes'),
+                      // Action Buttons (only show in manual mode or when editing)
+                      if (!_useQuickCreate || !isCreating)
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton(
+                                onPressed: _isSaving ? null : () => Navigator.pop(context),
+                                child: const Text('Cancel'),
                               ),
                             ),
-                          ),
-                        ],
-                      ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              flex: 2,
+                              child: FilledButton.icon(
+                                onPressed: _isSaving ? null : _handleSave,
+                                icon: _isSaving
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : Icon(isCreating ? Icons.add : Icons.check),
+                                label: Text(
+                                  _isSaving 
+                                      ? (isCreating ? 'Creating...' : 'Saving...')
+                                      : (isCreating ? 'Create AI' : 'Save Changes'),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                       SizedBox(height: mediaQuery.padding.bottom + 8),
                     ],
                   ),

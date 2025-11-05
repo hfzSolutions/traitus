@@ -27,6 +27,40 @@ class DatabaseService {
     return (response as List).map((json) => AiChat.fromJson(json)).toList();
   }
 
+  /// Count unread assistant messages for a chat since last_read_at
+  Future<int> getUnreadCount(String chatId, {DateTime? since}) async {
+    final userId = SupabaseService.client.auth.currentUser?.id;
+    if (userId == null) throw Exception('User not authenticated');
+
+    final threshold = since;
+
+    var query = _client
+        .from('messages')
+        .select()
+        .eq('chat_id', chatId)
+        .eq('user_id', userId)
+        .eq('role', 'assistant');
+
+    if (threshold != null) {
+      query = query.gt('created_at', threshold.toIso8601String());
+    }
+
+    final response = await query;
+    return (response as List).length;
+  }
+
+  /// Mark chat as read now by updating last_read_at
+  Future<void> markChatRead(String chatId) async {
+    final userId = SupabaseService.client.auth.currentUser?.id;
+    if (userId == null) throw Exception('User not authenticated');
+
+    await _client
+        .from('chats')
+        .update({'last_read_at': DateTime.now().toIso8601String()})
+        .eq('id', chatId)
+        .eq('user_id', userId);
+  }
+
   /// Create a new chat
   Future<AiChat> createChat(AiChat chat) async {
     final userId = SupabaseService.client.auth.currentUser?.id;
@@ -316,8 +350,11 @@ class DatabaseService {
     DateTime? dateOfBirth,
     String? preferredLanguage,
     String? avatarUrl,
+    String? experienceLevel,
+    String? useContext,
     required List<String> preferences,
     required List<String> selectedChatIds,
+    List<Map<String, dynamic>>? selectedChatDefinitions,
   }) async {
     final userId = SupabaseService.client.auth.currentUser?.id;
     if (userId == null) throw Exception('User not authenticated');
@@ -332,6 +369,10 @@ class DatabaseService {
         'preferred_language': preferredLanguage,
       if (avatarUrl != null) 
         'avatar_url': avatarUrl,
+      if (experienceLevel != null && experienceLevel.isNotEmpty)
+        'experience_level': experienceLevel,
+      if (useContext != null && useContext.isNotEmpty)
+        'use_context': useContext,
       'onboarding_completed': true,
       'preferences': preferences,
       'updated_at': DateTime.now().toIso8601String(),
@@ -346,11 +387,32 @@ class DatabaseService {
     final profile = UserProfile.fromJson(response);
 
     // Create selected AI chats
-    if (selectedChatIds.isNotEmpty) {
-      await _createSelectedChats(selectedChatIds);
+    try {
+      if (selectedChatDefinitions != null && selectedChatDefinitions.isNotEmpty) {
+        await _createChatsFromDefinitions(selectedChatDefinitions);
+      } else if (selectedChatIds.isNotEmpty) {
+        await _createSelectedChats(selectedChatIds);
+      }
+    } catch (e) {
+      // Proceed even if chat creation fails, profile is already saved
     }
 
     return profile;
+  }
+
+  /// Reset onboarding state so user can redo onboarding
+  Future<void> resetOnboarding() async {
+    final userId = SupabaseService.client.auth.currentUser?.id;
+    if (userId == null) throw Exception('User not authenticated');
+
+    await _client
+        .from('user_profiles')
+        .upsert({
+          'id': userId,
+          'onboarding_completed': false,
+          'preferences': [],
+          'updated_at': DateTime.now().toIso8601String(),
+        });
   }
 
   /// Create selected AI chats from onboarding
@@ -361,7 +423,8 @@ class DatabaseService {
         try {
           await createChat(AiChat(
             name: config['name'] as String,
-            description: config['description'] as String,
+            shortDescription: config['shortDescription'] as String? ?? config['description'] as String? ?? '',
+            systemPrompt: config['systemPrompt'] as String? ?? config['description'] as String? ?? 'You are a helpful AI assistant.',
             model: config['model'] as String,
             avatarUrl: config['avatar'] as String,
           ));
@@ -369,6 +432,34 @@ class DatabaseService {
           print('Error creating chat $chatId: $e');
           // Continue even if one chat fails
         }
+      }
+    }
+  }
+
+  /// Create chats directly from dynamic definitions suggested during onboarding
+  Future<void> _createChatsFromDefinitions(List<Map<String, dynamic>> chatDefs) async {
+    for (final def in chatDefs) {
+      try {
+        final preference = (def['preference'] ?? '').toString();
+        final model = (def['model'] ?? '').toString().isNotEmpty
+            ? (def['model'] as String)
+            : DefaultAIConfig.getModel(preference);
+        
+        final description = (def['description'] ?? '') as String;
+        final shortDescription = (def['shortDescription'] ?? description).toString();
+        final systemPrompt = (def['systemPrompt'] ?? description).toString();
+
+        await createChat(AiChat(
+          name: (def['name'] ?? 'Assistant') as String,
+          shortDescription: shortDescription.isNotEmpty ? shortDescription : 'A helpful AI assistant',
+          systemPrompt: systemPrompt.isNotEmpty ? systemPrompt : 'You are a helpful AI assistant.',
+          model: model,
+          // Do not submit emoji or any provided avatar for suggested assistants
+          // We'll leave avatarUrl null to avoid storing emojis as URLs
+          avatarUrl: null,
+        ));
+      } catch (e) {
+        // Continue even if one chat fails
       }
     }
   }
