@@ -8,6 +8,7 @@ import 'package:traitus/services/database_service.dart';
 import 'package:traitus/services/storage_service.dart';
 import 'package:traitus/services/supabase_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:traitus/services/models_service.dart';
 
 class ChatsListProvider extends ChangeNotifier {
   ChatsListProvider() {
@@ -22,6 +23,7 @@ class ChatsListProvider extends ChangeNotifier {
   String? _error;
   String? _activeChatId;
   RealtimeChannel? _messagesChannel;
+  final Set<String> _deletingChatIds = {}; // Track chats being deleted
   
   // Message cache: stores preloaded recent messages for each chat
   // Key: chatId, Value: List of recent messages (last 50)
@@ -49,9 +51,17 @@ class ChatsListProvider extends ChangeNotifier {
       
       // If no chats exist, create a default one
       if (_chats.isEmpty) {
-        final model = dotenv.env['OPENROUTER_MODEL'];
-        if (model == null || model.isEmpty) {
-          throw StateError('Missing OPENROUTER_MODEL. Add it to a .env file.');
+        String? model;
+        try {
+          final catalog = ModelCatalogService();
+          final models = await catalog.listEnabledModels();
+          final basic = models.firstWhere((m) => !m.isPremium, orElse: () => models.first);
+          model = basic.slug;
+        } catch (_) {
+          model = dotenv.env['OPENROUTER_MODEL'];
+          if (model == null || model.isEmpty) {
+            throw StateError('Missing OPENROUTER_MODEL. Add it to a .env file.');
+          }
         }
         final defaultChat = AiChat(
           name: 'AI Assistant',
@@ -116,8 +126,6 @@ class ChatsListProvider extends ChangeNotifier {
       // Cache the messages
       _messageCache[chatId] = recentMessages;
       _messageCountCache[chatId] = totalCount;
-      
-      debugPrint('Preloaded ${recentMessages.length} messages for chat $chatId');
     } catch (e) {
       debugPrint('Error preloading messages for chat $chatId: $e');
       // Non-critical, continue anyway
@@ -160,7 +168,6 @@ class ChatsListProvider extends ChangeNotifier {
   }
 
   void setActiveChat(String? chatId) {
-    debugPrint('setActiveChat: $_activeChatId -> $chatId');
     _activeChatId = chatId;
   }
 
@@ -257,14 +264,41 @@ class ChatsListProvider extends ChangeNotifier {
   /// Delete a chat and its avatar
   /// The avatar deletion is delayed to allow for undo functionality
   Future<void> deleteChat(String chatId, {bool deleteAvatarImmediately = false}) async {
+    // Prevent concurrent deletions of the same chat
+    if (_deletingChatIds.contains(chatId)) {
+      debugPrint('Chat $chatId is already being deleted, skipping...');
+      return;
+    }
+    
+    // Prevent deletion while loading
+    if (_isLoading) {
+      debugPrint('Cannot delete chat while loading chats');
+      return;
+    }
+    
+    _deletingChatIds.add(chatId);
+    
     try {
       // Find the chat to get its avatar URL before deletion
       final chatIndex = _chats.indexWhere((chat) => chat.id == chatId);
-      String? avatarUrl;
       
-      if (chatIndex != -1) {
-        avatarUrl = _chats[chatIndex].avatarUrl;
+      // If chat not found, it might have already been deleted
+      if (chatIndex == -1) {
+        debugPrint('Chat $chatId not found in local list, may have already been deleted');
+        return;
       }
+      
+      final chat = _chats[chatIndex];
+      final avatarUrl = chat.avatarUrl;
+      
+      // Clear message cache for this chat immediately
+      _messageCache.remove(chatId);
+      _messageCountCache.remove(chatId);
+      
+      // Remove from local list optimistically (before database deletion)
+      // This provides immediate UI feedback
+      _chats.removeAt(chatIndex);
+      notifyListeners();
       
       // Delete from database (this also deletes messages via cascade)
       await _dbService.deleteChat(chatId);
@@ -292,15 +326,20 @@ class ChatsListProvider extends ChangeNotifier {
           });
         }
       }
-      
-      // Remove from local list
-      _chats.removeWhere((chat) => chat.id == chatId);
-      notifyListeners();
     } catch (e) {
       _error = e.toString();
       debugPrint('Error deleting chat: $e');
+      
+      // Reload chats to sync with database state
+      // ignore: unawaited_futures
+      refreshChats().catchError((refreshError) {
+        debugPrint('Error refreshing chats after deletion failure: $refreshError');
+      });
+      
       notifyListeners();
       rethrow;
+    } finally {
+      _deletingChatIds.remove(chatId);
     }
   }
   
@@ -422,6 +461,9 @@ class ChatsListProvider extends ChangeNotifier {
             final messageId = record['id'] as String?;
             final model = record['model'] as String?;
 
+            // Ignore realtime updates for chats being deleted
+            if (_deletingChatIds.contains(chatId)) return;
+            
             final index = _chats.indexWhere((c) => c.id == chatId);
             if (index == -1) return;
 
@@ -447,10 +489,8 @@ class ChatsListProvider extends ChangeNotifier {
             );
 
             // Unread logic based on active chat
-            debugPrint('Realtime message received for chat $chatId, activeChatId: $_activeChatId');
             if (_activeChatId == chatId) {
               // If user is viewing this chat, mark read
-              debugPrint('User is viewing this chat, marking as read');
               updated = updated.copyWith(unreadCount: 0, lastReadAt: DateTime.now());
               // Persist last_read_at best-effort (non-blocking)
               // ignore: unawaited_futures
@@ -460,7 +500,6 @@ class ChatsListProvider extends ChangeNotifier {
               // Ensure we use the current unreadCount from the chat, not the updated one
               // Also ensure it's at least 1 if a new message just arrived
               final newUnreadCount = (currentChat.unreadCount + 1).clamp(1, 999);
-              debugPrint('User NOT viewing chat $chatId: unreadCount ${currentChat.unreadCount} -> ${newUnreadCount}');
               updated = updated.copyWith(unreadCount: newUnreadCount);
               
               // Play notification sound for new message

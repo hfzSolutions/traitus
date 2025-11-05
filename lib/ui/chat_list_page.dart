@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
+// import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:provider/provider.dart';
 import 'package:traitus/models/ai_chat.dart';
 import 'package:traitus/providers/chat_provider.dart';
@@ -8,6 +8,7 @@ import 'package:traitus/ui/chat_page.dart';
 import 'package:traitus/ui/notes_page.dart';
 import 'package:traitus/ui/widgets/chat_form_modal.dart';
 import 'package:traitus/ui/widgets/app_avatar.dart';
+// import 'package:traitus/services/models_service.dart';
 
 class ChatListPage extends StatelessWidget {
   const ChatListPage({super.key, this.isInTabView = false});
@@ -191,17 +192,13 @@ class ChatListPage extends StatelessWidget {
           required String name,
           required String shortDescription,
           required String systemPrompt,
+          required String model,
           String? avatarUrl,
           required String responseTone,
           required String responseLength,
           required String writingStyle,
           required bool useEmojis,
         }) async {
-          final model = dotenv.env['OPENROUTER_MODEL'];
-          if (model == null || model.isEmpty) {
-            throw Exception('OPENROUTER_MODEL not configured');
-          }
-
           final newChat = AiChat(
             name: name,
             shortDescription: shortDescription,
