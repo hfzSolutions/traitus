@@ -4,6 +4,8 @@ class UserProfile {
   final String? displayName;
   final DateTime? dateOfBirth;
   final String? preferredLanguage;
+  final String? experienceLevel;
+  final String? useContext;
   final bool onboardingCompleted;
   final List<String> preferences;
   final DateTime createdAt;
@@ -15,6 +17,8 @@ class UserProfile {
     this.displayName,
     this.dateOfBirth,
     this.preferredLanguage,
+    this.experienceLevel,
+    this.useContext,
     this.onboardingCompleted = false,
     this.preferences = const [],
     DateTime? createdAt,
@@ -32,6 +36,8 @@ class UserProfile {
           ? DateTime.parse(json['date_of_birth'] as String)
           : null,
       preferredLanguage: json['preferred_language'] as String?,
+      experienceLevel: json['experience_level'] as String?,
+      useContext: json['use_context'] as String?,
       onboardingCompleted: json['onboarding_completed'] as bool? ?? false,
       preferences: json['preferences'] != null
           ? List<String>.from(json['preferences'] as List)
@@ -53,6 +59,8 @@ class UserProfile {
       'display_name': displayName,
       'date_of_birth': dateOfBirth?.toIso8601String(),
       'preferred_language': preferredLanguage,
+      'experience_level': experienceLevel,
+      'use_context': useContext,
       'onboarding_completed': onboardingCompleted,
       'preferences': preferences,
       'created_at': createdAt.toIso8601String(),
@@ -66,6 +74,8 @@ class UserProfile {
     String? displayName,
     DateTime? dateOfBirth,
     String? preferredLanguage,
+    String? experienceLevel,
+    String? useContext,
     bool? onboardingCompleted,
     List<String>? preferences,
   }) {
@@ -75,6 +85,8 @@ class UserProfile {
       displayName: displayName ?? this.displayName,
       dateOfBirth: dateOfBirth ?? this.dateOfBirth,
       preferredLanguage: preferredLanguage ?? this.preferredLanguage,
+      experienceLevel: experienceLevel ?? this.experienceLevel,
+      useContext: useContext ?? this.useContext,
       onboardingCompleted: onboardingCompleted ?? this.onboardingCompleted,
       preferences: preferences ?? this.preferences,
       createdAt: createdAt,

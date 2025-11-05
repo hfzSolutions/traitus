@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -74,6 +75,102 @@ class OpenRouterApi {
     return content;
   }
 
+  /// Stream chat completion responses using Server-Sent Events (SSE).
+  /// Yields content chunks as they arrive from the API.
+  Stream<String> streamChatCompletion({
+    required List<Map<String, String>> messages,
+    String? model,
+    double? temperature,
+  }) async* {
+    final uri = _endpointUri('/chat/completions');
+
+    final requestBody = <String, dynamic>{
+      'model': model ?? _model,
+      'messages': messages,
+      'stream': true, // Enable streaming
+      if (temperature != null) 'temperature': temperature,
+    };
+
+    final headers = <String, String>{
+      'Authorization': 'Bearer $_apiKey',
+      'Content-Type': 'application/json',
+      'HTTP-Referer': dotenv.env['OPENROUTER_SITE_URL'] ?? 'https://example.com',
+      'X-Title': dotenv.env['OPENROUTER_APP_NAME'] ?? 'Traitus AI Chat',
+    };
+
+    final request = http.Request('POST', uri)
+      ..headers.addAll(headers)
+      ..body = jsonEncode(requestBody);
+
+    final streamedResponse = await _client.send(request);
+
+    if (streamedResponse.statusCode < 200 || streamedResponse.statusCode >= 300) {
+      final errorBody = await streamedResponse.stream.bytesToString();
+      throw http.ClientException(
+        'OpenRouter error ${streamedResponse.statusCode}: $errorBody',
+        uri,
+      );
+    }
+
+    String buffer = '';
+    await for (final chunk in streamedResponse.stream.transform(utf8.decoder)) {
+      buffer += chunk;
+      
+      // Process complete lines (SSE format uses \n\n as event separator)
+      while (buffer.contains('\n')) {
+        final lineEnd = buffer.indexOf('\n');
+        final line = buffer.substring(0, lineEnd);
+        buffer = buffer.substring(lineEnd + 1);
+        
+        // Skip empty lines and comment lines
+        if (line.trim().isEmpty || line.startsWith(':')) continue;
+        
+        // SSE format: "data: {json}"
+        if (line.startsWith('data: ')) {
+          final data = line.substring(6).trim();
+          
+          // Stream finished
+          if (data == '[DONE]') {
+            return;
+          }
+
+          try {
+            final decoded = jsonDecode(data) as Map<String, dynamic>;
+            final choices = decoded['choices'] as List<dynamic>?;
+            final delta = choices?.first?['delta'] as Map<String, dynamic>?;
+            final content = delta?['content'] as String?;
+            
+            if (content != null && content.isNotEmpty) {
+              yield content;
+            }
+          } catch (e) {
+            // Ignore parsing errors for incomplete chunks
+            continue;
+          }
+        }
+      }
+    }
+
+    // Process any remaining buffer
+    if (buffer.trim().isNotEmpty && buffer.startsWith('data: ')) {
+      final data = buffer.substring(6).trim();
+      if (data != '[DONE]') {
+        try {
+          final decoded = jsonDecode(data) as Map<String, dynamic>;
+          final choices = decoded['choices'] as List<dynamic>?;
+          final delta = choices?.first?['delta'] as Map<String, dynamic>?;
+          final content = delta?['content'] as String?;
+          
+          if (content != null && content.isNotEmpty) {
+            yield content;
+          }
+        } catch (_) {
+          // Ignore parsing errors
+        }
+      }
+    }
+  }
+
   /// Recommend chat IDs (from a fixed allowed set) ranked by suitability
   /// given the user's selected preference/category IDs.
   ///
@@ -142,9 +239,32 @@ class OpenRouterApi {
     required List<String> selectedPreferences,
     required String languageCode,
     int maxSuggestions = 5,
+    String? displayName,
+    DateTime? dateOfBirth,
+    String? experienceLevel,
+    String? useContext,
   }) async {
     if (selectedPreferences.isEmpty) {
       return [];
+    }
+
+    // Calculate age group if date of birth is provided
+    String? ageGroup;
+    if (dateOfBirth != null) {
+      final age = DateTime.now().difference(dateOfBirth).inDays ~/ 365;
+      if (age < 13) {
+        ageGroup = 'child';
+      } else if (age < 18) {
+        ageGroup = 'teen';
+      } else if (age < 25) {
+        ageGroup = 'young_adult';
+      } else if (age < 40) {
+        ageGroup = 'adult';
+      } else if (age < 60) {
+        ageGroup = 'middle_aged';
+      } else {
+        ageGroup = 'senior';
+      }
     }
 
     final system = {
@@ -163,16 +283,39 @@ class OpenRouterApi {
           'Do NOT include any extra fields. Limit to max_suggestions items. '
           'Make names human-friendly. shortDescription must be concise, user-facing value text. '
           'systemPrompt must be actionable, specific, and suitable as an AI system message. '
-          'Localize name and shortDescription in the target language if provided; systemPrompt may be localized too.'
+          'Localize name and shortDescription in the target language if provided; systemPrompt may be localized too. '
+          'If age_group is provided, tailor assistants appropriately (e.g., simpler explanations for younger users, more professional/advanced for older users). '
+          'If display_name is provided, you may reference it for personalization, but keep it subtle. '
+          'If experience_level is provided (beginner/intermediate/advanced), adjust the complexity and depth of assistance accordingly. '
+          'For beginners: use simpler language, provide step-by-step guidance, explain concepts clearly. '
+          'For intermediate: assume some knowledge, provide balanced guidance with examples. '
+          'For advanced: use technical terminology, focus on optimization and best practices, less hand-holding. '
+          'If use_context is provided (work/personal/both), tailor the assistant\'s tone and focus. '
+          'Work context: professional, business-focused, productivity-oriented. '
+          'Personal context: friendly, hobby-oriented, relaxed. '
+          'Both: balanced approach that works in multiple contexts.'
     };
+    final userData = <String, dynamic>{
+      'selected_preferences': selectedPreferences,
+      'max_suggestions': maxSuggestions,
+      'language_code': languageCode,
+      'instruction': 'Use language_code for the output language; if unsupported, default to English.',
+    };
+    if (displayName != null && displayName.isNotEmpty) {
+      userData['display_name'] = displayName;
+    }
+    if (ageGroup != null) {
+      userData['age_group'] = ageGroup;
+    }
+    if (experienceLevel != null && experienceLevel.isNotEmpty) {
+      userData['experience_level'] = experienceLevel;
+    }
+    if (useContext != null && useContext.isNotEmpty) {
+      userData['use_context'] = useContext;
+    }
     final user = {
       'role': 'user',
-      'content': jsonEncode({
-        'selected_preferences': selectedPreferences,
-        'max_suggestions': maxSuggestions,
-        'language_code': languageCode,
-        'instruction': 'Use language_code for the output language; if unsupported, default to English.'
-      }),
+      'content': jsonEncode(userData),
     };
 
     final content = await createChatCompletion(
@@ -234,6 +377,116 @@ class OpenRouterApi {
     }
 
     return results;
+  }
+
+  /// Generate a single AI chat configuration from a user's natural language description.
+  ///
+  /// Returns a map with: name, shortDescription, systemPrompt, and inferred preference.
+  /// If generation fails, returns null and caller should fall back to manual input.
+  Future<Map<String, dynamic>?> generateChatFromDescription({
+    required String userDescription,
+    String? languageCode,
+  }) async {
+    if (userDescription.trim().isEmpty) {
+      return null;
+    }
+
+    final system = {
+      'role': 'system',
+      'content':
+          'You are a helpful assistant that creates AI chat configurations from user descriptions. '
+          'Design a chat-centric AI assistant for frequent, everyday use in a messaging-only app. '
+          'It must be productive, positive, and broadly helpful through conversation (coaching, Q&A, brainstorming, planning, tutoring, reflection). '
+          'It should NOT require executing external tasks, automations, scripts, device control, or account access—only dialogue. '
+          'Avoid novelty-only, unsafe, harmful, explicit, illegal, or negative themes. '
+          'Return ONLY a strict JSON object. No prose. Schema: '
+          '{"name": string (human-friendly, 2-5 words), '
+          ' "shortDescription": string (concise, <= 80 chars, user-facing value proposition), '
+          ' "systemPrompt": detailed string (2-6 sentences) defining role, scope, constraints, and helpful behavior suitable as an AI system message, '
+          ' "preference": string (one of: coding, creative, research, productivity, learning, business) - choose the best match}. '
+          'Do NOT include any extra fields. '
+          'Make the name human-friendly and clear. shortDescription must be concise and explain what the AI helps with. '
+          'systemPrompt must be actionable, specific, and suitable as an AI system message. '
+          'Localize name and shortDescription in the target language if provided; systemPrompt may be localized too.'
+    };
+
+    final userData = <String, dynamic>{
+      'user_description': userDescription.trim(),
+      'instruction': 'Create an AI assistant configuration based on the user_description. Return a JSON object matching the schema exactly.',
+    };
+    if (languageCode != null && languageCode.isNotEmpty) {
+      userData['language_code'] = languageCode;
+      userData['instruction'] += ' Use language_code for the output language; if unsupported, default to English.';
+    }
+
+    final user = {
+      'role': 'user',
+      'content': jsonEncode(userData),
+    };
+
+    try {
+      final content = await createChatCompletion(
+        messages: [system.cast<String, String>(), user.cast<String, String>()],
+        temperature: 0.7,
+      );
+
+      // Try to parse JSON object
+      final decoded = jsonDecode(content);
+      if (decoded is Map) {
+        final name = (decoded['name'] ?? '').toString().trim();
+        final shortDescription = (decoded['shortDescription'] ?? decoded['description'] ?? '').toString().trim();
+        final systemPrompt = (decoded['systemPrompt'] ?? decoded['description'] ?? '').toString().trim();
+        final preference = (decoded['preference'] ?? '').toString().trim().toLowerCase();
+
+        if (name.isEmpty || shortDescription.isEmpty || systemPrompt.isEmpty) {
+          return null;
+        }
+
+        // Validate preference
+        const validPreferences = ['coding', 'creative', 'research', 'productivity', 'learning', 'business'];
+        final validPreference = validPreferences.contains(preference) ? preference : 'coding';
+
+        // Basic safety filter
+        final lowerName = name.toLowerCase();
+        final lowerDesc = shortDescription.toLowerCase();
+        const banned = [
+          'prank', 'nsfw', 'adult', 'explicit', 'violent', 'weapon', 'hack', 'hacking',
+          'cheat', 'gambling', 'betting', 'piracy', 'malware', 'phishing', 'deepfake',
+          'scam', 'illegal', 'harm', 'self-harm', 'drug', 'narcotic'
+        ];
+        bool containsBanned = banned.any((w) => lowerName.contains(w) || lowerDesc.contains(w));
+        if (containsBanned) return null;
+
+        // Discourage novelty and external-action personas
+        const novelty = ['joke', 'meme', 'pickup line', 'fortune', 'horoscope'];
+        bool looksNovelty = novelty.any((w) => lowerName.contains(w) || lowerDesc.contains(w));
+        if (looksNovelty) return null;
+
+        const externalAction = [
+          'automation', 'script', 'execute', 'run command', 'control device', 'control phone',
+          'api call', 'integrate with', 'web scraping', 'scrape', 'deploy', 'file system',
+          'shell', 'terminal', 'root', 'adb', 'keyboard macro', 'mouse macro'
+        ];
+        bool looksExternal = externalAction.any((w) => lowerName.contains(w) || lowerDesc.contains(w));
+        if (looksExternal) return null;
+
+        // Attach model based on preference
+        final model = DefaultAIConfig.getModel(validPreference);
+
+        return {
+          'name': name,
+          'shortDescription': shortDescription,
+          'systemPrompt': systemPrompt,
+          'preference': validPreference,
+          'model': model,
+        };
+      }
+    } catch (e) {
+      // If parsing fails, return null - caller should fall back to manual input
+      return null;
+    }
+
+    return null;
   }
 }
 

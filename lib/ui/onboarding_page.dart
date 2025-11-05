@@ -43,6 +43,8 @@ class _OnboardingPageState extends State<OnboardingPage>
   File? _selectedImage;
   DateTime? _selectedDateOfBirth;
   String _selectedLanguage = 'en';
+  String? _experienceLevel; // 'beginner', 'intermediate', 'advanced'
+  String? _useContext; // 'work', 'personal', 'both'
   final _imagePicker = ImagePicker();
   final _storageService = StorageService();
   final _openRouterApi = OpenRouterApi();
@@ -311,7 +313,7 @@ class _OnboardingPageState extends State<OnboardingPage>
     });
 
     // When entering AI selection step, fetch AI-based recommendations
-    if (newStep == 3) {
+    if (newStep == 4) {
       _fetchAiRecommendations();
     }
   }
@@ -379,6 +381,74 @@ class _OnboardingPageState extends State<OnboardingPage>
     );
   }
 
+  Widget _buildExperienceChip(String value, String label, IconData icon) {
+    final isSelected = _experienceLevel == value;
+    return FilterChip(
+      selected: isSelected,
+      label: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16),
+          const SizedBox(width: 6),
+          Text(label),
+        ],
+      ),
+      onSelected: (selected) {
+        setState(() {
+          _experienceLevel = selected ? value : null;
+        });
+      },
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      selectedColor: Theme.of(context).colorScheme.primaryContainer,
+      checkmarkColor: Theme.of(context).colorScheme.onPrimaryContainer,
+      side: BorderSide(
+        color: isSelected
+            ? Theme.of(context).colorScheme.primary
+            : Theme.of(context).colorScheme.outline.withOpacity(0.3),
+        width: isSelected ? 2 : 1,
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      labelPadding: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+    );
+  }
+
+  Widget _buildUseContextChip(String value, String label, IconData icon) {
+    final isSelected = _useContext == value;
+    return FilterChip(
+      selected: isSelected,
+      label: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16),
+          const SizedBox(width: 6),
+          Text(label),
+        ],
+      ),
+      onSelected: (selected) {
+        setState(() {
+          _useContext = selected ? value : null;
+        });
+      },
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      selectedColor: Theme.of(context).colorScheme.primaryContainer,
+      checkmarkColor: Theme.of(context).colorScheme.onPrimaryContainer,
+      side: BorderSide(
+        color: isSelected
+            ? Theme.of(context).colorScheme.primary
+            : Theme.of(context).colorScheme.outline.withOpacity(0.3),
+        width: isSelected ? 2 : 1,
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      labelPadding: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+    );
+  }
+
   Future<void> _selectDateOfBirth() async {
     final DateTime? picked = await showDatePicker(
       context: context,
@@ -442,6 +512,12 @@ class _OnboardingPageState extends State<OnboardingPage>
       final dynamicChats = await _openRouterApi.recommendChatDefinitions(
         selectedPreferences: _selectedPreferences.toList(),
         languageCode: _selectedLanguage,
+        displayName: _usernameController.text.trim().isNotEmpty
+            ? _usernameController.text.trim()
+            : null,
+        dateOfBirth: _selectedDateOfBirth,
+        experienceLevel: _experienceLevel,
+        useContext: _useContext,
       );
       if (mounted) {
         setState(() {
@@ -533,6 +609,8 @@ class _OnboardingPageState extends State<OnboardingPage>
         dateOfBirth: _selectedDateOfBirth,
         preferredLanguage: _selectedLanguage,
         avatarUrl: avatarUrl,
+        experienceLevel: _experienceLevel,
+        useContext: _useContext,
         preferences: _selectedPreferences.toList(),
         selectedChatIds: _selectedAIChats.toList(),
         selectedChatDefinitions: selectedDefs,
@@ -1155,6 +1233,187 @@ class _OnboardingPageState extends State<OnboardingPage>
     );
   }
 
+  Widget _buildExperienceAndContextStep() {
+    return Column(
+      children: [
+        // Scrollable content
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(32.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Experience Level Section
+                Row(
+                  children: [
+                    Icon(
+                      Icons.school_rounded,
+                      size: 22,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      'Experience Level',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: [
+                          _buildExperienceChip('beginner', 'Beginner', Icons.rocket_launch_rounded),
+                          _buildExperienceChip('intermediate', 'Intermediate', Icons.trending_up_rounded),
+                          _buildExperienceChip('advanced', 'Advanced', Icons.star_rounded),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 32),
+                
+                // Use Context Section
+                Row(
+                  children: [
+                    Icon(
+                      Icons.work_outline_rounded,
+                      size: 22,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      'Primary Use',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: [
+                          _buildUseContextChip('work', 'Work', Icons.business_center_rounded),
+                          _buildUseContextChip('personal', 'Personal', Icons.person_outline_rounded),
+                          _buildUseContextChip('both', 'Both', Icons.balance_rounded),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 32),
+                
+                // Subtle reference to selected preferences
+                if (_selectedPreferences.isNotEmpty) ...[
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.info_outline_rounded,
+                          size: 14,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.6),
+                        ),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            'Based on your ${_selectedPreferences.length} ${_selectedPreferences.length == 1 ? 'interest' : 'interests'}',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.6),
+                                  fontSize: 11,
+                                ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        
+        // Fixed bottom navigation
+        Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 10,
+                offset: const Offset(0, -2),
+              ),
+            ],
+          ),
+          child: SafeArea(
+            top: false,
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => _changeStep(2),
+                    icon: const Icon(Icons.arrow_back_rounded),
+                    label: const Text('Back'),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: (_experienceLevel == null || _useContext == null)
+                        ? null
+                        : () {
+                            HapticFeedback.selectionClick();
+                            _changeStep(4);
+                          },
+                    icon: const Icon(Icons.arrow_forward_rounded),
+                    label: const Text('Next'),
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildAIChatSelectionStep() {
     final recommendedChats = _getRecommendedChats();
     
@@ -1352,40 +1611,6 @@ class _OnboardingPageState extends State<OnboardingPage>
                                         maxLines: 2,
                                         overflow: TextOverflow.ellipsis,
                                       ),
-                                      const SizedBox(height: 6),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 4,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: isSelected
-                                              ? Theme.of(context)
-                                                  .colorScheme
-                                                  .primary
-                                                  .withOpacity(0.2)
-                                              : Theme.of(context)
-                                                  .colorScheme
-                                                  .surfaceContainer,
-                                          borderRadius: BorderRadius.circular(6),
-                                        ),
-                                        child: Text(
-                                          chat['model'] as String,
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .labelSmall
-                                              ?.copyWith(
-                                                color: isSelected
-                                                    ? Theme.of(context)
-                                                        .colorScheme
-                                                        .onPrimaryContainer
-                                                    : Theme.of(context)
-                                                        .colorScheme
-                                                        .onSurfaceVariant,
-                                                fontFamily: 'monospace',
-                                              ),
-                                        ),
-                                      ),
                                     ],
                                   ),
                                 ),
@@ -1480,7 +1705,7 @@ class _OnboardingPageState extends State<OnboardingPage>
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: _isLoading ? null : () => _changeStep(2),
+                    onPressed: _isLoading ? null : () => _changeStep(3),
                     icon: const Icon(Icons.arrow_back_rounded),
                     label: const Text('Back'),
                     style: OutlinedButton.styleFrom(
@@ -1562,23 +1787,23 @@ class _OnboardingPageState extends State<OnboardingPage>
                         Expanded(
                           child: Column(
                             children: [
-                              Text(
-                                'Step $_currentStep of 3',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .labelMedium
-                                    ?.copyWith(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                              ),
-                              const SizedBox(height: 8),
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(10),
-                                child: LinearProgressIndicator(
-                                  value: _currentStep / 3,
+                            Text(
+                              'Step $_currentStep of 4',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelMedium
+                                  ?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                            ),
+                            const SizedBox(height: 8),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(10),
+                              child: LinearProgressIndicator(
+                                value: _currentStep / 4,
                                   minHeight: 6,
                                   backgroundColor: Theme.of(context)
                                       .colorScheme
@@ -1607,6 +1832,7 @@ class _OnboardingPageState extends State<OnboardingPage>
                       _buildWelcomeStep(),
                       _buildProfileStep(),
                       _buildPreferencesStep(),
+                      _buildExperienceAndContextStep(),
                       _buildAIChatSelectionStep(),
                     ],
                   ),

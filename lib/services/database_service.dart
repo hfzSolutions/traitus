@@ -350,6 +350,8 @@ class DatabaseService {
     DateTime? dateOfBirth,
     String? preferredLanguage,
     String? avatarUrl,
+    String? experienceLevel,
+    String? useContext,
     required List<String> preferences,
     required List<String> selectedChatIds,
     List<Map<String, dynamic>>? selectedChatDefinitions,
@@ -367,6 +369,10 @@ class DatabaseService {
         'preferred_language': preferredLanguage,
       if (avatarUrl != null) 
         'avatar_url': avatarUrl,
+      if (experienceLevel != null && experienceLevel.isNotEmpty)
+        'experience_level': experienceLevel,
+      if (useContext != null && useContext.isNotEmpty)
+        'use_context': useContext,
       'onboarding_completed': true,
       'preferences': preferences,
       'updated_at': DateTime.now().toIso8601String(),

@@ -863,7 +863,8 @@ class _AssistantBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (message.isPending) {
+    // Show loading indicator only if pending and no content yet
+    if (message.isPending && message.content.isEmpty) {
       return _LoadingMessage(theme: theme);
     }
 
@@ -923,24 +924,39 @@ class _AssistantBubble extends StatelessWidget {
       children: [
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: MarkdownBody(
-            selectable: true,
-            softLineBreak: true,
-            data: message.content.trim(),
-            styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
-              p: theme.textTheme.bodyLarge?.copyWith(
-                fontSize: 16,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: MarkdownBody(
+                  selectable: true,
+                  softLineBreak: true,
+                  data: message.content.trim().isEmpty 
+                      ? '...' 
+                      : message.content.trim(),
+                  styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
+                    p: theme.textTheme.bodyLarge?.copyWith(
+                      fontSize: 16,
+                    ),
+                    h1: theme.textTheme.headlineMedium?.copyWith(
+                      fontSize: 24,
+                    ),
+                    h2: theme.textTheme.titleLarge?.copyWith(
+                      fontSize: 20,
+                    ),
+                    h3: theme.textTheme.titleMedium?.copyWith(
+                      fontSize: 18,
+                    ),
+                  ),
+                ),
               ),
-              h1: theme.textTheme.headlineMedium?.copyWith(
-                fontSize: 24,
-              ),
-              h2: theme.textTheme.titleLarge?.copyWith(
-                fontSize: 20,
-              ),
-              h3: theme.textTheme.titleMedium?.copyWith(
-                fontSize: 18,
-              ),
-            ),
+              // Show blinking cursor when message is still pending
+              if (message.isPending && message.content.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(left: 2),
+                  child: _StreamingCursor(theme: theme),
+                ),
+            ],
           ),
         ),
         const SizedBox(height: 4),
@@ -1032,6 +1048,48 @@ class _LoadingMessage extends StatelessWidget {
   }
 }
 
+class _StreamingCursor extends StatefulWidget {
+  const _StreamingCursor({required this.theme});
+
+  final ThemeData theme;
+
+  @override
+  State<_StreamingCursor> createState() => _StreamingCursorState();
+}
+
+class _StreamingCursorState extends State<_StreamingCursor>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 600),
+      vsync: this,
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _controller,
+      child: Container(
+        width: 2,
+        height: 20,
+        margin: const EdgeInsets.only(top: 2),
+        color: widget.theme.colorScheme.primary,
+      ),
+    );
+  }
+}
+
 class _LoadMoreIndicator extends StatelessWidget {
   const _LoadMoreIndicator({
     required this.isLoading,
@@ -1079,7 +1137,7 @@ class _LoadMoreIndicator extends StatelessWidget {
   }
 }
 
-class _InputBar extends StatelessWidget {
+class _InputBar extends StatefulWidget {
   const _InputBar({
     required this.controller,
     required this.onSend,
@@ -1091,11 +1149,33 @@ class _InputBar extends StatelessWidget {
   final VoidCallback onStop;
 
   @override
+  State<_InputBar> createState() => _InputBarState();
+}
+
+class _InputBarState extends State<_InputBar> {
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onTextChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onTextChanged);
+    super.dispose();
+  }
+
+  void _onTextChanged() {
+    setState(() {});
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isSending = context.watch<ChatProvider>().isSending;
     final screenWidth = MediaQuery.of(context).size.width;
     final maxWidth = screenWidth > 768 ? 768.0 : screenWidth;
+    final hasText = widget.controller.text.trim().isNotEmpty;
 
     return Center(
       child: ConstrainedBox(
@@ -1106,11 +1186,11 @@ class _InputBar extends StatelessWidget {
             children: [
               Expanded(
                 child: TextField(
-                  controller: controller,
+                  controller: widget.controller,
                   minLines: 1,
                   maxLines: 6,
                   textInputAction: TextInputAction.send,
-                  onSubmitted: (_) => onSend(),
+                  onSubmitted: (_) => widget.onSend(),
                   enabled: !isSending,
                   style: theme.textTheme.bodyLarge?.copyWith(
                     fontSize: 16,
@@ -1130,13 +1210,13 @@ class _InputBar extends StatelessWidget {
               if (isSending)
                 IconButton.filledTonal(
                   tooltip: 'Stop generating',
-                  onPressed: onStop,
+                  onPressed: widget.onStop,
                   icon: const Icon(Icons.stop_circle_outlined),
                 )
               else
                 IconButton.filled(
                   tooltip: 'Send message',
-                  onPressed: controller.text.trim().isEmpty ? null : onSend,
+                  onPressed: hasText ? widget.onSend : null,
                   icon: const Icon(Icons.arrow_upward_rounded),
                 ),
             ],

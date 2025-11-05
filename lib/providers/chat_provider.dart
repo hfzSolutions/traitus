@@ -71,16 +71,14 @@ class ChatProvider extends ChangeNotifier {
         final cachedCount = _chatsListProvider.getCachedMessageCount(_chatId);
         
         if (cachedMessages != null && cachedCount != null) {
-          // Use cached data - instant load!
-          debugPrint('Using cached messages for chat $_chatId (${cachedMessages.length} messages)');
-          loadedMessages = List.from(cachedMessages);
+        // Use cached data - instant load!
+        loadedMessages = List.from(cachedMessages);
           totalCount = cachedCount;
         }
       }
       
       // If no cache available, load from database
       if (loadedMessages.isEmpty) {
-        debugPrint('Loading messages from database for chat $_chatId');
         totalCount = await _dbService.getMessageCount(_chatId);
         
         loadedMessages = await _dbService.fetchMessages(
@@ -111,7 +109,7 @@ class ChatProvider extends ChangeNotifier {
       _hasMoreMessages = nonSystemMessages < (totalCount ?? 0);
       
     } catch (e) {
-      debugPrint('Error loading messages: $e');
+      // Error loading messages
       // Keep system message on error
     } finally {
       _isLoading = false;
@@ -155,7 +153,7 @@ class ChatProvider extends ChangeNotifier {
         _hasMoreMessages = newNonSystemCount < totalCount;
       }
     } catch (e) {
-      debugPrint('Error loading older messages: $e');
+      // Error loading older messages
     } finally {
       _isLoadingOlder = false;
       notifyListeners();
@@ -176,7 +174,7 @@ class ChatProvider extends ChangeNotifier {
         _chatsListProvider.addMessageToCache(_chatId, userMessage);
       }
     } catch (e) {
-      debugPrint('Error saving user message: $e');
+      // Error saving user message
     }
 
     final pendingMessage = ChatMessage(role: ChatRole.assistant, content: '', isPending: true);
@@ -187,22 +185,58 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final response = await _api.createChatCompletion(
+      String fullResponse = '';
+      
+      // Use streaming for natural word-by-word response
+      await for (final chunk in _api.streamChatCompletion(
         messages: _messages
             .where((m) => !m.isPending || m.id == pendingId)
             .map((m) => m.toOpenRouterMessage())
             .toList(),
         model: _model,
-      );
+      )) {
+        // Check if generation was stopped
+        if (_isStopped) {
+          break;
+        }
 
-      if (!_isStopped) {
+        // Console log each chunk as it arrives from OpenRouter
+        debugPrint('📦 Chunk: $chunk');
+
+        // Append chunk to full response
+        fullResponse += chunk;
+        
+        // Update the pending message with accumulated content
+        final pendingIndex = _messages.indexWhere((m) => m.id == pendingId && m.isPending);
+        if (pendingIndex != -1) {
+          _messages[pendingIndex] = ChatMessage(
+            role: ChatRole.assistant,
+            content: fullResponse,
+            id: pendingId,
+            isPending: true, // Still pending until stream completes
+            model: _model,
+          );
+          notifyListeners(); // Update UI with each chunk
+        }
+      }
+
+      // Console log the bot's complete reply
+      if (fullResponse.isNotEmpty) {
+        debugPrint('🤖 Bot Reply (Complete): $fullResponse');
+      }
+
+      if (_isStopped) {
+        // User stopped generation - remove pending message
+        _messages.removeWhere((m) => m.id == pendingId && m.isPending);
+      } else if (fullResponse.isNotEmpty) {
+        // Stream completed successfully
         final pendingIndex = _messages.indexWhere((m) => m.id == pendingId && m.isPending);
         if (pendingIndex != -1) {
           final assistantMessage = ChatMessage(
             role: ChatRole.assistant,
-            content: response,
+            content: fullResponse,
             id: pendingId,
-            isPending: false,
+            isPending: false, // Mark as complete
             model: _model,
           );
           _messages[pendingIndex] = assistantMessage;
@@ -215,11 +249,11 @@ class ChatProvider extends ChangeNotifier {
               _chatsListProvider.addMessageToCache(_chatId, assistantMessage);
             }
           } catch (e) {
-            debugPrint('Error saving assistant message: $e');
+            // Error saving assistant message
           }
         }
       } else {
-        // Clean up pending message if stopped
+        // Empty response - clean up
         _messages.removeWhere((m) => m.id == pendingId && m.isPending);
       }
     } catch (e) {
@@ -240,7 +274,7 @@ class ChatProvider extends ChangeNotifier {
         try {
           await _dbService.createMessage(_chatId, errorMsg);
         } catch (e) {
-          debugPrint('Error saving error message: $e');
+          // Error saving error message
         }
       }
     } finally {
@@ -272,7 +306,7 @@ class ChatProvider extends ChangeNotifier {
     try {
       await _dbService.deleteMessage(_messages[lastAssistantIndex].id);
     } catch (e) {
-      debugPrint('Error deleting message from database: $e');
+      // Error deleting message from database
     }
 
     // Remove the last assistant message and any user message after it
@@ -298,7 +332,7 @@ class ChatProvider extends ChangeNotifier {
       _messages.removeWhere((m) => m.id == messageId);
       notifyListeners();
     } catch (e) {
-      debugPrint('Error deleting message: $e');
+      // Error deleting message
     }
   }
 
@@ -312,7 +346,7 @@ class ChatProvider extends ChangeNotifier {
       try {
         await _dbService.updateMessage(updatedMessage);
       } catch (e) {
-        debugPrint('Error updating message: $e');
+        // Error updating message
       }
       
       // Remove all messages after this one
@@ -321,7 +355,7 @@ class ChatProvider extends ChangeNotifier {
         try {
           await _dbService.deleteMessage(msg.id);
         } catch (e) {
-          debugPrint('Error deleting message: $e');
+          // Error deleting message
         }
       }
       _messages.removeRange(index + 1, _messages.length);
@@ -340,7 +374,7 @@ class ChatProvider extends ChangeNotifier {
     try {
       await _dbService.deleteAllMessages(_chatId);
     } catch (e) {
-      debugPrint('Error deleting messages: $e');
+      // Error deleting messages
     }
     
     _messages
