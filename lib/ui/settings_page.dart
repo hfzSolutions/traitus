@@ -1,88 +1,16 @@
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:traitus/providers/auth_provider.dart';
 import 'package:traitus/providers/theme_provider.dart';
 import 'package:traitus/ui/onboarding_page.dart';
 import 'package:traitus/ui/pro_upgrade_page.dart';
 import 'package:traitus/ui/widgets/haptic_modal.dart';
-import 'package:traitus/services/storage_service.dart';
 import 'package:traitus/services/entitlements_service.dart' show EntitlementsService, UserPlan;
 
-class SettingsPage extends StatefulWidget {
+class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key, this.isInTabView = false});
   
   final bool isInTabView;
-
-  @override
-  State<SettingsPage> createState() => _SettingsPageState();
-}
-
-class _SettingsPageState extends State<SettingsPage> {
-  final _imagePicker = ImagePicker();
-  final _storageService = StorageService();
-  bool _isUploadingAvatar = false;
-
-  Future<void> _pickAndUploadProfileImage(BuildContext context, AuthProvider authProvider) async {
-    try {
-      final XFile? image = await _imagePicker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 512,
-        maxHeight: 512,
-        imageQuality: 85,
-      );
-
-      if (image != null && mounted) {
-        setState(() {
-          _isUploadingAvatar = true;
-        });
-
-        try {
-          // Upload to storage
-          final avatarUrl = await _storageService.updateUserAvatar(
-            image.path,
-            authProvider.userProfile?.avatarUrl,
-          );
-
-          // Update in database
-          await authProvider.updateUserAvatar(avatarUrl);
-
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Profile picture updated!'),
-                duration: Duration(seconds: 2),
-              ),
-            );
-          }
-        } catch (e) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Failed to update profile picture: $e'),
-                duration: const Duration(seconds: 3),
-              ),
-            );
-          }
-        } finally {
-          if (mounted) {
-            setState(() {
-              _isUploadingAvatar = false;
-            });
-          }
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to pick image: $e'),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -90,118 +18,11 @@ class _SettingsPageState extends State<SettingsPage> {
     
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Profile & Settings'),
-        automaticallyImplyLeading: !widget.isInTabView,
+        title: const Text('Settings'),
+        automaticallyImplyLeading: !isInTabView,
       ),
       body: ListView(
         children: [
-          // Profile Section
-          Consumer<AuthProvider>(
-            builder: (context, authProvider, _) {
-              final user = authProvider.user;
-              final userProfile = authProvider.userProfile;
-              return Container(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  children: [
-                    GestureDetector(
-                      onTap: _isUploadingAvatar ? null : () => _pickAndUploadProfileImage(context, authProvider),
-                      child: Stack(
-                        children: [
-                          Container(
-                            width: 100,
-                            height: 100,
-                            decoration: BoxDecoration(
-                              color: theme.colorScheme.primaryContainer,
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: theme.colorScheme.primary,
-                                width: 3,
-                              ),
-                            ),
-                            child: _isUploadingAvatar
-                                ? Center(
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: theme.colorScheme.primary,
-                                    ),
-                                  )
-                                : userProfile?.avatarUrl != null && userProfile!.avatarUrl!.isNotEmpty
-                                    ? ClipOval(
-                                        child: Image.network(
-                                          userProfile.avatarUrl!,
-                                          width: 100,
-                                          height: 100,
-                                          fit: BoxFit.cover,
-                                          errorBuilder: (context, error, stackTrace) {
-                                            return Icon(
-                                              Icons.person,
-                                              size: 50,
-                                              color: theme.colorScheme.onPrimaryContainer,
-                                            );
-                                          },
-                                        ),
-                                      )
-                                    : Icon(
-                                        Icons.person,
-                                        size: 50,
-                                        color: theme.colorScheme.onPrimaryContainer,
-                                      ),
-                          ),
-                          if (!_isUploadingAvatar)
-                            Positioned(
-                              bottom: 0,
-                              right: 0,
-                              child: Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: theme.colorScheme.primary,
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: theme.colorScheme.surface,
-                                    width: 2,
-                                  ),
-                                ),
-                                child: Icon(
-                                  Icons.camera_alt,
-                                  size: 16,
-                                  color: theme.colorScheme.onPrimary,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Tap to change photo',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurface.withOpacity(0.6),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    if (user?.email != null) ...[
-                      Text(
-                        user!.email!,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                    Text(
-                      userProfile?.displayName ?? 'Traitus AI User',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.onSurface.withOpacity(0.6),
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-          const Divider(),
-          
           // Appearance Section
           _SectionHeader(title: 'Appearance'),
           Consumer<ThemeProvider>(
@@ -248,7 +69,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   isPro ? Icons.workspace_premium : Icons.account_circle,
                   color: isPro 
                       ? Theme.of(context).colorScheme.primary
-                      : Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                      : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
                 ),
                 title: Text(
                   isPro ? 'Pro Plan' : 'Free Plan',
@@ -272,7 +93,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     : Icon(
                         Icons.arrow_forward_ios,
                         size: 16,
-                        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.4),
+                        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4),
                       ),
                 onTap: isPro
                     ? null
@@ -453,7 +274,7 @@ class _ThemeOptionTile extends StatelessWidget {
         icon,
         color: isSelected 
             ? theme.colorScheme.primary 
-            : theme.colorScheme.onSurface.withOpacity(0.6),
+            : theme.colorScheme.onSurface.withValues(alpha: 0.6),
       ),
       title: Text(
         title,
@@ -470,7 +291,7 @@ class _ThemeOptionTile extends StatelessWidget {
           : null,
       onTap: onTap,
       selected: isSelected,
-      selectedTileColor: theme.colorScheme.primaryContainer.withOpacity(0.3),
+      selectedTileColor: theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
     );
   }
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:provider/provider.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:traitus/config/default_ai_config.dart';
 import 'package:traitus/models/ai_chat.dart';
 import 'package:traitus/models/chat_message.dart';
@@ -822,6 +823,17 @@ class _ChatPageState extends State<ChatPage> {
               onModelPicker: () => _showModelPicker(context),
               onQuickReply: () => _showQuickReplySheet(context),
             ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: Text(
+                'AI can make mistakes. Please verify important information.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurface.withOpacity(0.5),
+                  fontSize: 11,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
           ],
         ),
       ),
@@ -1356,20 +1368,108 @@ class _InputBar extends StatefulWidget {
 }
 
 class _InputBarState extends State<_InputBar> {
+  final stt.SpeechToText _speech = stt.SpeechToText();
+  bool _isListening = false;
+  bool _isAvailable = false;
+  String _baseText = '';
+  String _partialText = '';
+  bool _isUpdatingFromSpeech = false;
+
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_onTextChanged);
+    _initializeSpeech();
   }
 
   @override
   void dispose() {
     widget.controller.removeListener(_onTextChanged);
+    _speech.stop();
     super.dispose();
   }
 
   void _onTextChanged() {
     setState(() {});
+  }
+
+  Future<void> _initializeSpeech() async {
+    bool available = await _speech.initialize(
+      onError: (error) {
+        debugPrint('Speech recognition error: $error');
+        setState(() {
+          _isListening = false;
+        });
+      },
+      onStatus: (status) {
+        debugPrint('Speech recognition status: $status');
+        if (status == 'done' || status == 'notListening') {
+          setState(() {
+            _isListening = false;
+            _partialText = '';
+          });
+        }
+      },
+    );
+    setState(() {
+      _isAvailable = available;
+    });
+  }
+
+  Future<void> _toggleListening() async {
+    if (!_isAvailable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Speech recognition is not available on this device'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    if (_isListening) {
+      await _speech.stop();
+      setState(() {
+        _isListening = false;
+        _partialText = '';
+      });
+    } else {
+      setState(() {
+        _isListening = true;
+        _baseText = widget.controller.text;
+        _partialText = '';
+      });
+      
+      await _speech.listen(
+        onResult: (result) {
+          setState(() {
+            _isUpdatingFromSpeech = true;
+            if (result.finalResult) {
+              // Final result: append to base text
+              final newText = _baseText.isEmpty
+                  ? result.recognizedWords
+                  : '$_baseText ${result.recognizedWords}';
+              widget.controller.text = newText;
+              _baseText = newText;
+              _partialText = '';
+            } else {
+              // Partial result: show base text + partial text
+              _partialText = result.recognizedWords;
+              final displayText = _baseText.isEmpty
+                  ? _partialText
+                  : '$_baseText $_partialText';
+              widget.controller.text = displayText;
+            }
+            _isUpdatingFromSpeech = false;
+          });
+        },
+        listenFor: const Duration(seconds: 30),
+        pauseFor: const Duration(seconds: 3),
+        localeId: 'en_US',
+        cancelOnError: true,
+        partialResults: true,
+      );
+    }
   }
 
   @override
@@ -1401,6 +1501,16 @@ class _InputBarState extends State<_InputBar> {
                 color: theme.colorScheme.onSurface.withOpacity(0.7),
               ),
               const SizedBox(width: 4),
+              if (_isAvailable)
+                IconButton(
+                  tooltip: _isListening ? 'Stop recording' : 'Start voice input',
+                  icon: Icon(_isListening ? Icons.mic : Icons.mic_none),
+                  onPressed: isSending ? null : _toggleListening,
+                  color: _isListening
+                      ? theme.colorScheme.error
+                      : theme.colorScheme.onSurface.withOpacity(0.7),
+                ),
+              if (_isAvailable) const SizedBox(width: 4),
               Expanded(
                 child: TextField(
                   controller: widget.controller,
@@ -1409,11 +1519,30 @@ class _InputBarState extends State<_InputBar> {
                   textInputAction: TextInputAction.send,
                   onSubmitted: (_) => widget.onSend(),
                   enabled: !isSending,
+                  onChanged: (text) {
+                    // If user manually edits text while listening, update base text
+                    // Only update if this change wasn't from speech recognition
+                    if (_isListening && !_isUpdatingFromSpeech) {
+                      // Check if the text doesn't match our expected pattern
+                      final expectedText = _baseText.isEmpty
+                          ? _partialText
+                          : '$_baseText $_partialText';
+                      if (text != expectedText) {
+                        // User manually edited - update base text
+                        _baseText = text;
+                        _partialText = '';
+                      }
+                    }
+                  },
                   style: theme.textTheme.bodyLarge?.copyWith(
                     fontSize: 16,
                   ),
                   decoration: InputDecoration(
-                    hintText: isSending ? 'AI is thinking…' : 'Message…',
+                    hintText: _isListening
+                        ? 'Listening...'
+                        : isSending
+                            ? 'AI is thinking…'
+                            : 'Message…',
                     filled: true,
                     fillColor: theme.colorScheme.surfaceContainerHighest,
                     border: OutlineInputBorder(
