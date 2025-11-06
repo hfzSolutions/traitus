@@ -158,18 +158,26 @@ class AiChat {
         break;
     }
     
-    // Add length guidance
+    // Add length guidance with explicit token limit awareness
     switch (responseLength) {
       case 'brief':
-        buffer.write('\n- Keep responses concise and to the point');
+        buffer.write('\n- Keep responses concise and to the point (aim for 2-4 sentences, maximum 300 words)');
+        buffer.write('\n- Prioritize the most important information first');
+        buffer.write('\n- If you reach the response limit, ensure your last sentence is complete and meaningful');
         break;
       case 'balanced':
-        buffer.write('\n- Provide balanced responses with appropriate detail');
+        buffer.write('\n- Provide balanced responses with appropriate detail (aim for 4-8 sentences)');
+        buffer.write('\n- If you reach the response limit, ensure your last sentence is complete and meaningful');
         break;
       case 'detailed':
         buffer.write('\n- Provide comprehensive and detailed explanations');
+        buffer.write('\n- If you reach the response limit, ensure your last sentence is complete and meaningful');
         break;
     }
+    
+    // Add general instruction about completing thoughts
+    buffer.write('\n- Always complete your thoughts within the response limit - do not cut off mid-sentence');
+    buffer.write('\n- If approaching the limit, conclude with a complete sentence rather than starting a new point');
     
     // Add writing style guidance
     switch (writingStyle) {

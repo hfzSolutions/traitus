@@ -16,9 +16,11 @@ Controls the conversational tone of the AI:
 
 ### 2. Response Length
 Controls how detailed the AI's responses are:
-- **Brief** - Quick, concise answers straight to the point
-- **Balanced** - Moderate detail, good for general use
-- **Detailed** - Comprehensive and thorough explanations
+- **Brief** - Quick, concise answers straight to the point (2-4 sentences, ~200-300 words)
+- **Balanced** - Moderate detail, good for general use (4-8 sentences, ~400-600 words)
+- **Detailed** - Comprehensive and thorough explanations (8+ sentences, ~600-1000 words)
+
+**Note:** The response length setting automatically adjusts the token limit to prevent cut-off responses. Brief responses use lower token limits (300-500 tokens), while detailed responses get higher limits (up to 1500 tokens) to ensure complete answers.
 
 ### 3. Writing Style
 Controls the language complexity and approach:
@@ -81,9 +83,10 @@ String getEnhancedSystemPrompt() {
   
   // Adds specific instructions based on selected preferences
   // - Tone guidance
-  // - Length guidance
+  // - Length guidance (with explicit token limit awareness)
   // - Style guidance
   // - Emoji guidance
+  // - Instructions to complete thoughts within limits
   
   return buffer.toString();
 }
@@ -95,10 +98,19 @@ You are a helpful coding assistant specialized in Flutter and Dart.
 
 Response Style Guidelines:
 - Use a warm, friendly, and approachable tone
-- Provide balanced responses with appropriate detail
+- Provide balanced responses with appropriate detail (aim for 4-8 sentences)
+- If you reach the response limit, ensure your last sentence is complete and meaningful
 - Use simple, easy-to-understand language
 - Avoid using emojis in responses
+- Always complete your thoughts within the response limit - do not cut off mid-sentence
+- If approaching the limit, conclude with a complete sentence rather than starting a new point
 ```
+
+**Key Features:**
+- Explicit instructions to complete thoughts within token limits
+- Guidance to avoid mid-sentence cutoffs
+- Instructions to prioritize important information first (for brief responses)
+- Clear expectations about response length based on the setting
 
 ### Integration with ChatProvider
 
@@ -110,8 +122,21 @@ ChatProvider(
   chatId: chat.id,
   model: chat.model,
   systemPrompt: chat.getEnhancedSystemPrompt(), // Enhanced!
+  responseLength: chat.responseLength, // Passed for dynamic token calculation
 )
 ```
+
+**File: `lib/providers/chat_provider.dart`**
+
+The `ChatProvider` now:
+1. Receives the `responseLength` parameter
+2. Automatically calculates appropriate `max_tokens` based on response length:
+   - **Brief**: 50% of base max_tokens (300-500 tokens)
+   - **Balanced**: Base max_tokens (default: 800 tokens)
+   - **Detailed**: 150% of base max_tokens (up to 1500 tokens)
+3. Passes the calculated `max_tokens` to the OpenRouter API
+
+This ensures responses are appropriately sized and complete, preventing cut-off text.
 
 ## Migration
 
@@ -163,9 +188,9 @@ The AI will immediately start using your new preferences in all future responses
 - **Enthusiastic** - When you want motivation and energy
 
 #### Length Selection
-- **Brief** - When you need quick answers or are short on time
-- **Balanced** - Good default for most situations
-- **Detailed** - When learning new concepts or need thorough explanations
+- **Brief** - When you need quick answers or are short on time. Automatically uses lower token limits (300-500 tokens) to ensure concise, complete responses.
+- **Balanced** - Good default for most situations. Uses standard token limits (800 tokens default) for well-rounded answers.
+- **Detailed** - When learning new concepts or need thorough explanations. Uses higher token limits (up to 1500 tokens) to allow comprehensive responses without cut-offs.
 
 #### Style Selection
 - **Simple** - Best for beginners or complex topics explained simply
@@ -227,6 +252,54 @@ Possible future additions:
 - **Code Style** - Commented, Minimal, Best practices
 - **Explanation Style** - Teach why, Just the answer
 
+## Token Management & Response Length
+
+### Dynamic Token Calculation
+
+The system automatically adjusts `max_tokens` based on the response length setting to prevent cut-off responses:
+
+**Implementation: `lib/services/openrouter_api.dart`**
+
+```dart
+static int getMaxTokensForResponseLength(String? responseLength, {int? baseMaxTokens}) {
+  final base = baseMaxTokens ?? 800;
+  
+  switch (responseLength?.toLowerCase()) {
+    case 'brief':
+      // Brief responses: 300-400 tokens (roughly 200-300 words)
+      return (base * 0.5).round().clamp(300, 500);
+    case 'balanced':
+      // Balanced responses: use base value
+      return base;
+    case 'detailed':
+      // Detailed responses: allow more tokens (but still reasonable for mobile)
+      return (base * 1.5).round().clamp(base, 1500);
+    default:
+      return base;
+  }
+}
+```
+
+### Benefits
+
+1. **Prevents Cut-Offs**: Appropriate token limits ensure responses complete properly
+2. **Mobile-Optimized**: Brief responses stay concise for mobile screens
+3. **Complete Thoughts**: System prompt instructions ensure sentences finish properly
+4. **Configurable Base**: Base token limit can be set via `OPENROUTER_MAX_TOKENS` environment variable
+
+### Configuration
+
+The base token limit can be configured in your `.env` file:
+```bash
+# Default: 800 tokens (suitable for mobile)
+OPENROUTER_MAX_TOKENS=800
+```
+
+The response length setting then automatically adjusts from this base:
+- Brief: ~400 tokens (50% of base)
+- Balanced: 800 tokens (base value)
+- Detailed: ~1200 tokens (150% of base)
+
 ## Technical Notes
 
 ### Why This Approach?
@@ -236,6 +309,7 @@ Instead of exposing technical parameters like `temperature`, `top_p`, etc., we:
 2. **Guide behavior through prompts** - More reliable than parameter tuning
 3. **Keep it simple** - Fewer options that work well together
 4. **Match user intent** - Settings map to what users actually want
+5. **Prevent cut-offs** - Dynamic token limits + prompt instructions ensure complete responses
 
 ### System Prompt Construction
 
@@ -257,10 +331,12 @@ This ensures:
 
 ## Files Modified
 
-1. **lib/models/ai_chat.dart** - Added response style fields and enhanced prompt method
+1. **lib/models/ai_chat.dart** - Added response style fields and enhanced prompt method with cut-off prevention instructions
 2. **lib/ui/chat_page.dart** - Added UI for editing response styles
-3. **lib/ui/chat_list_page.dart** - Updated to use enhanced system prompt
-4. **supabase_migration_add_response_style.sql** - Database migration
+3. **lib/ui/chat_list_page.dart** - Updated to use enhanced system prompt and pass responseLength
+4. **lib/providers/chat_provider.dart** - Added responseLength parameter and dynamic max_tokens calculation
+5. **lib/services/openrouter_api.dart** - Added `getMaxTokensForResponseLength()` method and maxTokens getter
+6. **supabase_migration_add_response_style.sql** - Database migration
 
 ## Testing Checklist
 
@@ -273,6 +349,12 @@ This ensures:
 - [ ] Check that style changes apply immediately to new messages
 - [ ] Ensure system prompt is correctly enhanced
 - [ ] Verify backward compatibility with existing chats
+- [ ] **Test token limits**: Verify brief responses use lower token limits (300-500 tokens)
+- [ ] **Test token limits**: Verify balanced responses use base token limit (800 tokens)
+- [ ] **Test token limits**: Verify detailed responses use higher token limits (up to 1500 tokens)
+- [ ] **Test cut-off prevention**: Verify responses complete properly without mid-sentence cut-offs
+- [ ] **Test mobile optimization**: Verify brief responses are concise and complete on mobile screens
+- [ ] **Test environment variable**: Change `OPENROUTER_MAX_TOKENS` and verify it affects token calculations
 
 ## Support
 

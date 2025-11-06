@@ -9,6 +9,9 @@ SUPABASE_ANON_KEY=
 OPENROUTER_MODEL=minimax/minimax-m2:free
 # Model used for onboarding and finding AI assistants (falls back to OPENROUTER_MODEL if not set)
 ONBOARDING_MODEL=
+# Maximum tokens for AI responses (default: 800, suitable for mobile)
+# Lower values = shorter responses, higher values = longer responses
+OPENROUTER_MAX_TOKENS=800
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_SITE_URL=https://your-site.example
 OPENROUTER_APP_NAME=Traitus AI Chat

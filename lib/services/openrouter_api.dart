@@ -44,16 +44,51 @@ class OpenRouterApi {
     return Uri.parse('$baseUrl$path');
   }
 
+  /// Get max_tokens from environment variable, with mobile-friendly default
+  int get _maxTokens {
+    final value = dotenv.env['OPENROUTER_MAX_TOKENS'];
+    if (value != null && value.isNotEmpty) {
+      return int.tryParse(value) ?? 800;
+    }
+    // Default to 800 tokens for mobile (roughly 600-1000 words)
+    return 800;
+  }
+
+  /// Public getter for max_tokens (for use by ChatProvider)
+  int get maxTokens => _maxTokens;
+
+  /// Calculate appropriate max_tokens based on response length preference
+  /// This helps prevent cut-off responses by setting appropriate limits
+  static int getMaxTokensForResponseLength(String? responseLength, {int? baseMaxTokens}) {
+    final base = baseMaxTokens ?? 800;
+    
+    switch (responseLength?.toLowerCase()) {
+      case 'brief':
+        // Brief responses: 300-400 tokens (roughly 200-300 words)
+        return (base * 0.5).round().clamp(300, 500);
+      case 'balanced':
+        // Balanced responses: use base value
+        return base;
+      case 'detailed':
+        // Detailed responses: allow more tokens (but still reasonable for mobile)
+        return (base * 1.5).round().clamp(base, 1500);
+      default:
+        return base;
+    }
+  }
+
   Future<String> createChatCompletion({
     required List<Map<String, String>> messages,
     String? model,
     double? temperature,
+    int? maxTokens,
   }) async {
     final uri = _endpointUri('/chat/completions');
 
     final requestBody = <String, dynamic>{
       'model': model ?? _model,
       'messages': messages,
+      'max_tokens': maxTokens ?? _maxTokens,
       if (temperature != null) 'temperature': temperature,
     };
 
@@ -92,6 +127,7 @@ class OpenRouterApi {
     required List<Map<String, String>> messages,
     String? model,
     double? temperature,
+    int? maxTokens,
   }) async* {
     final uri = _endpointUri('/chat/completions');
 
@@ -99,6 +135,7 @@ class OpenRouterApi {
       'model': model ?? _model,
       'messages': messages,
       'stream': true, // Enable streaming
+      'max_tokens': maxTokens ?? _maxTokens,
       if (temperature != null) 'temperature': temperature,
     };
 
@@ -440,6 +477,7 @@ class OpenRouterApi {
     try {
       final content = await createChatCompletion(
         messages: [system.cast<String, String>(), user.cast<String, String>()],
+        model: _onboardingModel,
         temperature: 0.7,
       );
 
