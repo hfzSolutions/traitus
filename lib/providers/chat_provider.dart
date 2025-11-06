@@ -14,12 +14,14 @@ class ChatProvider extends ChangeNotifier {
     String? chatId, 
     String? model,
     String? systemPrompt,
+    String? responseLength, // brief, balanced, detailed
     ChatsListProvider? chatsListProvider, // Optional cache provider
   }) 
       : _api = api ?? OpenRouterApi(),
         _chatId = chatId ?? '',
         _model = model ?? dotenv.env['OPENROUTER_MODEL'] ?? '',
         _systemPrompt = systemPrompt ?? 'You are a helpful, concise AI assistant. Use markdown for structure.',
+        _responseLength = responseLength,
         _chatsListProvider = chatsListProvider,
         _messages = <ChatMessage>[
           ChatMessage(
@@ -40,6 +42,7 @@ class ChatProvider extends ChangeNotifier {
   final String _chatId;
   String _model;
   final String _systemPrompt;
+  final String? _responseLength; // brief, balanced, detailed
   final ChatsListProvider? _chatsListProvider; // For accessing message cache
 
   final List<ChatMessage> _messages;
@@ -316,6 +319,13 @@ class ChatProvider extends ChangeNotifier {
       // Build message list for API call (works even if disposed)
       final messagesForApi = await _buildMessageListForApi(newUserMessage: userMessage);
       
+      // Calculate max_tokens based on response length preference
+      final baseMaxTokens = _api.maxTokens;
+      final maxTokens = OpenRouterApi.getMaxTokensForResponseLength(
+        _responseLength,
+        baseMaxTokens: baseMaxTokens,
+      );
+
       // Use streaming for natural word-by-word response
       // Continue streaming even if disposed - we want to save the message to DB
       await for (final chunk in _api.streamChatCompletion(
@@ -324,6 +334,7 @@ class ChatProvider extends ChangeNotifier {
             .map((m) => m.toOpenRouterMessage())
             .toList(),
         model: _model,
+        maxTokens: maxTokens,
       )) {
         // Only break if user stopped generation, not if disposed
         // We want to continue and save the message even if user navigated away

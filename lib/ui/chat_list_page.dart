@@ -153,6 +153,7 @@ class ChatListPage extends StatelessWidget {
                                 chatId: chat.id,
                                 model: chat.model,
                                 systemPrompt: chat.getEnhancedSystemPrompt(),
+                                responseLength: chat.responseLength,
                                 chatsListProvider: chatsProvider, // Pass cache provider
                               ),
                               child: ChatPage(chatId: chat.id),
