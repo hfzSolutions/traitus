@@ -1,62 +1,17 @@
-# ============================================
-# TRAITUS .env CONFIGURATION TEMPLATE
-# ============================================
-# Copy this file to .env and fill in your values
+# OpenRouter API Key (for AI chat)
+OPENROUTER_API_KEY=
 
-# ============================================
-# REQUIRED: Supabase Configuration
-# ============================================
-SUPABASE_URL=your_supabase_url_here
-SUPABASE_ANON_KEY=your_supabase_anon_key_here
+# Supabase Configuration
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
 
-# ============================================
-# REQUIRED: OpenRouter API Configuration
-# ============================================
-OPENROUTER_API_KEY=your_openrouter_api_key_here
+# Optional:
+OPENROUTER_MODEL=minimax/minimax-m2:free
+# Model used for onboarding and finding AI assistants (falls back to OPENROUTER_MODEL if not set)
+ONBOARDING_MODEL=
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_SITE_URL=https://your-site.example
+OPENROUTER_APP_NAME=Traitus AI Chat
 
-# ============================================
-# OPTIONAL: Default AI Models Configuration
-# ============================================
-# These control which models are used for AI assistants during onboarding
-# If not set, the app uses sensible defaults
-
-# Free model (used for coding, creative, research, business)
-DEFAULT_MODEL_FREE=minimax/minimax-m2:free
-
-# Premium model (used for productivity, learning)
-DEFAULT_MODEL_PREMIUM=minimax/minimax-m2:free
-
-# General fallback model
-DEFAULT_MODEL=minimax/minimax-m2:free
-
-# ============================================
-# OPTIONAL: Individual Assistant Model Overrides
-# ============================================
-# Uncomment and set to override specific assistant models
-
-# Coding Assistant
-# DEFAULT_MODEL_CODING=anthropic/claude-3.5-sonnet
-
-# Creative Writer
-# DEFAULT_MODEL_CREATIVE=google/gemini-2.0-flash-exp:free
-
-# Research Assistant
-# DEFAULT_MODEL_RESEARCH=anthropic/claude-3.5-sonnet
-
-# Productivity Coach
-# DEFAULT_MODEL_PRODUCTIVITY=minimax/minimax-m2:free
-
-# Learning Tutor
-# DEFAULT_MODEL_LEARNING=minimax/minimax-m2:free
-
-# Business Advisor
-# DEFAULT_MODEL_BUSINESS=minimax/minimax-m2:free
-
-# ============================================
-# NOTES
-# ============================================
-# - Free models may have rate limits
-# - Premium models may incur costs
-# - See ENV_CONFIGURATION.md for full documentation
-# - See AI_MODEL_CONFIGURATION.md for implementation details
-
+# OneSignal Push Notifications
+ONESIGNAL_APP_ID=

@@ -5,6 +5,7 @@ import 'package:traitus/providers/auth_provider.dart';
 import 'package:traitus/providers/theme_provider.dart';
 import 'package:traitus/ui/onboarding_page.dart';
 import 'package:traitus/ui/pro_upgrade_page.dart';
+import 'package:traitus/ui/widgets/haptic_modal.dart';
 import 'package:traitus/services/storage_service.dart';
 import 'package:traitus/services/entitlements_service.dart' show EntitlementsService, UserPlan;
 
@@ -349,7 +350,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
   
   Future<void> _showLogoutDialog(BuildContext context, AuthProvider authProvider) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await HapticModal.showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Logout'),
@@ -376,7 +377,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _showRedoOnboardingDialog(BuildContext context, AuthProvider authProvider) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await HapticModal.showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Redo Onboarding'),

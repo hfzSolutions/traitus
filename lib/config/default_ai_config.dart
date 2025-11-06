@@ -194,5 +194,31 @@ class DefaultAIConfig {
         ];
     }
   }
+
+  /// Get quick reply snippets for lazy users
+  static List<String> getQuickReplySnippets() {
+    return [
+      'Thanks!',
+      'Got it',
+      'Perfect',
+      'Sounds good',
+      'I agree',
+      'That makes sense',
+      'Can you explain more?',
+      'Tell me more',
+      'Interesting',
+      'I see',
+      'Okay',
+      'Sure',
+      'Yes',
+      'No',
+      'Maybe',
+      'Let me think about it',
+      'I need help with this',
+      'Can you elaborate?',
+      'What do you think?',
+      'Any suggestions?',
+    ];
+  }
 }
 

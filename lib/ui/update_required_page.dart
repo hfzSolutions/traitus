@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:traitus/models/app_version_info.dart';
 import 'package:traitus/services/version_control_service.dart';
+import 'package:traitus/ui/widgets/haptic_modal.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 /// Page shown when app update is required or in maintenance mode
@@ -304,7 +305,7 @@ class UpdateAvailableDialog extends StatelessWidget {
   });
 
   static Future<bool?> show(BuildContext context, VersionCheckStatus status) {
-    return showDialog<bool>(
+    return HapticModal.showDialog<bool>(
       context: context,
       barrierDismissible: true,
       builder: (context) => UpdateAvailableDialog(status: status),

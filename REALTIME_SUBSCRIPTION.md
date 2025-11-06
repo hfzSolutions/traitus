@@ -103,6 +103,8 @@ When a new message is inserted:
 4. **Notifications**: Play sound and vibration if user is not viewing
 5. **UI Update**: Notify listeners to refresh the chat list
 
+**Important**: The realtime subscription is the **single source of truth** for updating last messages when bot responses arrive. This prevents race conditions and ensures unread badges persist correctly. The `ChatProvider` does not call `updateLastMessage` for bot responses - it relies on the realtime subscription to handle this automatically.
+
 #### 3. Active Chat Tracking
 
 The app tracks which chat is currently being viewed:
@@ -144,6 +146,18 @@ if (_activeChatId == chatId) {
   updated = updated.copyWith(unreadCount: newUnreadCount);
 }
 ```
+
+#### 5. Last Message Display
+
+The chat list displays the **actual last message** in the conversation, whether it's from the user or the bot:
+
+- **User messages**: Updated immediately when sent (via `updateLastMessage` in `chat_page.dart`)
+- **Bot responses**: Updated automatically by the realtime subscription when the message is saved to the database
+
+**Key Implementation Details**:
+- The `updateLastMessage` method explicitly preserves `unreadCount` and `lastReadAt` to prevent accidental resets
+- Bot responses are handled exclusively by the realtime subscription to avoid race conditions
+- This ensures the chat list always shows the most recent message, and unread badges persist correctly
 
 ## Database Schema
 
@@ -220,6 +234,7 @@ No changes needed - uses existing `created_at` and `role` columns.
 - `markChatAsRead(String)` - Marks chat as read and updates DB
 - `_playNotificationSound()` - Plays sound and vibration
 - `_refreshUnreadCounts()` - Calculates unread counts on load
+- `updateLastMessage(String, String)` - Updates last message while preserving unread count
 
 ## Testing
 
@@ -260,10 +275,12 @@ flutter: Notification sound played successfully (alert)
 - Android: Check notification permissions
 - Verify device volume is up
 
-**Badge not showing?**
+**Badge not showing or disappearing?**
 - Check console for unread count logs
 - Verify `_activeChatId` is properly cleared when navigating back
 - Check if `notifyListeners()` is being called
+- Ensure `updateLastMessage` preserves `unreadCount` (should not reset it)
+- Verify realtime subscription is handling bot responses (not manual `updateLastMessage` calls)
 
 ## Performance Considerations
 

@@ -11,6 +11,7 @@ import 'package:traitus/services/openrouter_api.dart';
 import 'package:traitus/ui/home_page.dart';
 import 'package:traitus/providers/chats_list_provider.dart';
 import 'package:traitus/ui/widgets/app_avatar.dart';
+import 'package:traitus/ui/widgets/haptic_modal.dart';
 
 class OnboardingPage extends StatefulWidget {
   const OnboardingPage({super.key});
@@ -346,7 +347,7 @@ class _OnboardingPageState extends State<OnboardingPage>
 
   Future<void> _showImageSourcePicker() async {
     final theme = Theme.of(context);
-    await showModalBottomSheet<void>(
+    await HapticModal.showModalBottomSheet<void>(
       context: context,
       backgroundColor: theme.colorScheme.surface,
       shape: const RoundedRectangleBorder(

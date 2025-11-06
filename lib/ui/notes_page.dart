@@ -4,6 +4,7 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:provider/provider.dart';
 import 'package:traitus/models/note.dart';
 import 'package:traitus/providers/notes_provider.dart';
+import 'package:traitus/ui/widgets/haptic_modal.dart';
 
 class NotesPage extends StatelessWidget {
   const NotesPage({super.key, this.isInTabView = false});
@@ -75,7 +76,7 @@ class NotesPage extends StatelessWidget {
     NotesProvider notesProvider,
     Note note,
   ) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await HapticModal.showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete Note'),

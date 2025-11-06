@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:traitus/models/chat_message.dart';
 import 'package:traitus/services/openrouter_api.dart';
@@ -48,6 +49,7 @@ class ChatProvider extends ChangeNotifier {
   bool _isLoading = false;
   bool _isLoadingOlder = false;
   bool _hasMoreMessages = true;
+  bool _disposed = false;
 
   String get chatId => _chatId;
   List<ChatMessage> get messages => List.unmodifiable(_messages);
@@ -58,17 +60,77 @@ class ChatProvider extends ChangeNotifier {
   bool get hasMessages => _messages.where((m) => m.role != ChatRole.system).isNotEmpty;
   String get currentModel => _model;
 
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
+  /// Safely notify listeners only if not disposed
+  void _safeNotifyListeners() {
+    if (!_disposed) {
+      notifyListeners();
+    }
+  }
+
+  /// Build message list for API call, using cache or database if disposed
+  Future<List<ChatMessage>> _buildMessageListForApi({ChatMessage? newUserMessage}) async {
+    List<ChatMessage> messagesForApi = [];
+    
+    if (!_disposed) {
+      // Use in-memory messages if available
+      messagesForApi = List.from(_messages);
+    } else {
+      // If disposed, load from cache or database
+      if (_chatsListProvider != null) {
+        final cached = _chatsListProvider.getCachedMessages(_chatId);
+        if (cached != null && cached.isNotEmpty) {
+          messagesForApi = List.from(cached);
+        }
+      }
+      
+      // If no cache, load from database
+      if (messagesForApi.isEmpty) {
+        try {
+          messagesForApi = await _dbService.fetchMessages(
+            _chatId,
+            limit: 100, // Get enough messages for context
+            ascending: true,
+          );
+        } catch (e) {
+          // Error loading messages
+        }
+      }
+      
+      // Ensure system message is first
+      if (messagesForApi.isEmpty || messagesForApi.first.role != ChatRole.system) {
+        messagesForApi.insert(0, ChatMessage(
+          role: ChatRole.system,
+          content: _systemPrompt,
+        ));
+      }
+    }
+    
+    // Add new user message if provided
+    if (newUserMessage != null) {
+      messagesForApi.add(newUserMessage);
+    }
+    
+    return messagesForApi;
+  }
+
   void setModel(String model) {
-    if (model.trim().isEmpty) return;
+    if (model.trim().isEmpty || _disposed) return;
     _model = model.trim();
-    notifyListeners();
+    _safeNotifyListeners();
   }
 
   Future<void> _ensureModelAllowed() async {
+    if (_disposed) return;
     try {
       final entitlements = EntitlementsService();
       final plan = await entitlements.getCurrentUserPlan();
-      if (plan == UserPlan.pro) return; // Pro can use premium
+      if (plan == UserPlan.pro || _disposed) return; // Pro can use premium
 
       final catalog = ModelCatalogService();
       final models = await catalog.listEnabledModels();
@@ -82,14 +144,14 @@ class ChatProvider extends ChangeNotifier {
           enabled: true,
         ),
       );
-      if (current.isPremium) {
+      if (current.isPremium && !_disposed) {
         // Fallback to first basic model
         final basic = models.firstWhere(
           (m) => !m.isPremium,
           orElse: () => current,
         );
         _model = basic.slug;
-        notifyListeners();
+        _safeNotifyListeners();
       }
     } catch (_) {
       // Safe no-op on failure
@@ -97,10 +159,10 @@ class ChatProvider extends ChangeNotifier {
   }
 
   Future<void> _loadMessages() async {
-    if (_chatId.isEmpty) return;
+    if (_chatId.isEmpty || _disposed) return;
 
     _isLoading = true;
-    notifyListeners();
+    _safeNotifyListeners();
 
     try {
       // Try to use cached messages first (instant load!)
@@ -132,6 +194,16 @@ class ChatProvider extends ChangeNotifier {
         loadedMessages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
       }
       
+      // Remove duplicates by message ID (safety check)
+      final seenIds = <String>{};
+      loadedMessages = loadedMessages.where((m) {
+        if (seenIds.contains(m.id)) {
+          return false; // Duplicate, skip it
+        }
+        seenIds.add(m.id);
+        return true;
+      }).toList();
+      
       _messages
         ..clear()
         ..addAll(loadedMessages);
@@ -153,17 +225,19 @@ class ChatProvider extends ChangeNotifier {
       // Error loading messages
       // Keep system message on error
     } finally {
-      _isLoading = false;
-      notifyListeners();
+      if (!_disposed) {
+        _isLoading = false;
+        _safeNotifyListeners();
+      }
     }
   }
 
   /// Load older messages (for pagination when scrolling up)
   Future<void> loadOlderMessages() async {
-    if (_chatId.isEmpty || _isLoadingOlder || !_hasMoreMessages) return;
+    if (_chatId.isEmpty || _isLoadingOlder || !_hasMoreMessages || _disposed) return;
 
     _isLoadingOlder = true;
-    notifyListeners();
+    _safeNotifyListeners();
 
     try {
       // Count non-system messages to determine offset
@@ -196,8 +270,10 @@ class ChatProvider extends ChangeNotifier {
     } catch (e) {
       // Error loading older messages
     } finally {
-      _isLoadingOlder = false;
-      notifyListeners();
+      if (!_disposed) {
+        _isLoadingOlder = false;
+        _safeNotifyListeners();
+      }
     }
   }
 
@@ -206,14 +282,18 @@ class ChatProvider extends ChangeNotifier {
 
     // Ensure selected model is allowed for current plan
     await _ensureModelAllowed();
+    // Note: We continue even if disposed - we want to save the message to DB
 
     final userMessage = ChatMessage(role: ChatRole.user, content: content);
-    _messages.add(userMessage);
+    // Only update in-memory messages if not disposed (for UI)
+    if (!_disposed) {
+      _messages.add(userMessage);
+    }
     
-    // Save user message to database
+    // Always save user message to database (even if disposed, so realtime can pick it up)
     try {
       await _dbService.createMessage(_chatId, userMessage);
-      // Add to cache if available
+      // Add to cache if available (always, even if disposed)
       if (_chatsListProvider != null) {
         _chatsListProvider.addMessageToCache(_chatId, userMessage);
       }
@@ -222,24 +302,31 @@ class ChatProvider extends ChangeNotifier {
     }
 
     final pendingMessage = ChatMessage(role: ChatRole.assistant, content: '', isPending: true);
-    _messages.add(pendingMessage);
+    if (!_disposed) {
+      _messages.add(pendingMessage);
+    }
     final pendingId = pendingMessage.id;
     _isSending = true;
     _isStopped = false;
-    notifyListeners();
+    _safeNotifyListeners();
 
     try {
       String fullResponse = '';
       
+      // Build message list for API call (works even if disposed)
+      final messagesForApi = await _buildMessageListForApi(newUserMessage: userMessage);
+      
       // Use streaming for natural word-by-word response
+      // Continue streaming even if disposed - we want to save the message to DB
       await for (final chunk in _api.streamChatCompletion(
-        messages: _messages
-            .where((m) => !m.isPending || m.id == pendingId)
+        messages: messagesForApi
+            .where((m) => !m.isPending) // Exclude any pending messages from API call
             .map((m) => m.toOpenRouterMessage())
             .toList(),
         model: _model,
       )) {
-        // Check if generation was stopped
+        // Only break if user stopped generation, not if disposed
+        // We want to continue and save the message even if user navigated away
         if (_isStopped) {
           break;
         }
@@ -247,92 +334,117 @@ class ChatProvider extends ChangeNotifier {
         // Append chunk to full response
         fullResponse += chunk;
         
-        // Update the pending message with accumulated content
-        final pendingIndex = _messages.indexWhere((m) => m.id == pendingId && m.isPending);
-        if (pendingIndex != -1) {
-          _messages[pendingIndex] = ChatMessage(
-            role: ChatRole.assistant,
-            content: fullResponse,
-            id: pendingId,
-            isPending: true, // Still pending until stream completes
-            model: _model,
-          );
-          notifyListeners(); // Update UI with each chunk
+        // Update the pending message with accumulated content (only if not disposed)
+        if (!_disposed) {
+          final pendingIndex = _messages.indexWhere((m) => m.id == pendingId && m.isPending);
+          if (pendingIndex != -1) {
+            _messages[pendingIndex] = ChatMessage(
+              role: ChatRole.assistant,
+              content: fullResponse,
+              id: pendingId,
+              isPending: true, // Still pending until stream completes
+              model: _model,
+            );
+            _safeNotifyListeners(); // Update UI with each chunk (only if not disposed)
+          }
         }
       }
 
       if (_isStopped) {
         // User stopped generation - remove pending message
-        _messages.removeWhere((m) => m.id == pendingId && m.isPending);
+        if (!_disposed) {
+          _messages.removeWhere((m) => m.id == pendingId && m.isPending);
+        }
       } else if (fullResponse.isNotEmpty) {
-        // Stream completed successfully
-        final pendingIndex = _messages.indexWhere((m) => m.id == pendingId && m.isPending);
-        if (pendingIndex != -1) {
-          final assistantMessage = ChatMessage(
-            role: ChatRole.assistant,
-            content: fullResponse,
-            id: pendingId,
-            isPending: false, // Mark as complete
-            model: _model,
-          );
-          _messages[pendingIndex] = assistantMessage;
-          
-          // Save assistant message to database
-          try {
-            await _dbService.createMessage(_chatId, assistantMessage);
-            // Add to cache if available
-            if (_chatsListProvider != null) {
-              _chatsListProvider.addMessageToCache(_chatId, assistantMessage);
-            }
-          } catch (e) {
-            // Error saving assistant message
+        // Stream completed successfully - always save to database (even if disposed)
+        final assistantMessage = ChatMessage(
+          role: ChatRole.assistant,
+          content: fullResponse,
+          id: pendingId,
+          isPending: false, // Mark as complete
+          model: _model,
+        );
+        
+        // Update in-memory messages only if not disposed
+        if (!_disposed) {
+          final pendingIndex = _messages.indexWhere((m) => m.id == pendingId && m.isPending);
+          if (pendingIndex != -1) {
+            _messages[pendingIndex] = assistantMessage;
           }
+        }
+        
+        // Always save assistant message to database (so realtime subscription can pick it up)
+        try {
+          await _dbService.createMessage(_chatId, assistantMessage);
+          // Always add to cache (even if disposed) so realtime can show it in chat list
+          if (_chatsListProvider != null) {
+            _chatsListProvider.addMessageToCache(_chatId, assistantMessage);
+            // Note: We don't call updateLastMessage here because the realtime subscription
+            // will handle it automatically, including proper unread count management.
+            // This prevents race conditions and ensures unread badges work correctly.
+          }
+          
+          // Provide haptic feedback when bot finishes replying
+          try {
+            HapticFeedback.mediumImpact();
+          } catch (e) {
+            // Haptic feedback is optional, ignore errors
+          }
+        } catch (e) {
+          // Error saving assistant message
         }
       } else {
         // Empty response - clean up
-        _messages.removeWhere((m) => m.id == pendingId && m.isPending);
+        if (!_disposed) {
+          _messages.removeWhere((m) => m.id == pendingId && m.isPending);
+        }
       }
     } catch (e) {
-      final pendingIndex = _messages.indexWhere((m) => m.id == pendingId && m.isPending);
+      // Always save error message to database (even if disposed)
       final errorMessage = e.toString().replaceAll('Exception: ', '').replaceAll('ClientException: ', '');
-      if (pendingIndex != -1) {
-        final errorMsg = ChatMessage(
-          role: ChatRole.assistant,
-          content: errorMessage,
-          hasError: true,
-          id: pendingId,
-          isPending: false,
-          model: _model,
-        );
-        _messages[pendingIndex] = errorMsg;
-        
-        // Save error message to database
-        try {
-          await _dbService.createMessage(_chatId, errorMsg);
-        } catch (e) {
-          // Error saving error message
+      final errorMsg = ChatMessage(
+        role: ChatRole.assistant,
+        content: errorMessage,
+        hasError: true,
+        id: pendingId,
+        isPending: false,
+        model: _model,
+      );
+      
+      // Update in-memory messages only if not disposed
+      if (!_disposed) {
+        final pendingIndex = _messages.indexWhere((m) => m.id == pendingId && m.isPending);
+        if (pendingIndex != -1) {
+          _messages[pendingIndex] = errorMsg;
         }
+      }
+      
+      // Always save error message to database
+      try {
+        await _dbService.createMessage(_chatId, errorMsg);
+      } catch (e) {
+        // Error saving error message
       }
     } finally {
       _isSending = false;
-      notifyListeners();
+      _safeNotifyListeners();
     }
   }
 
   void stopGeneration() {
-    if (_isSending) {
+    if (_isSending && !_disposed) {
       _isStopped = true;
       _isSending = false;
       final pendingIndex = _messages.lastIndexWhere((m) => m.isPending);
       if (pendingIndex != -1) {
         _messages.removeAt(pendingIndex);
       }
-      notifyListeners();
+      _safeNotifyListeners();
     }
   }
 
   Future<void> regenerateLastResponse() async {
-    if (_isSending) return;
+    if (_isSending || _disposed) return;
 
     // Find the last assistant message
     final lastAssistantIndex = _messages.lastIndexWhere((m) => m.role == ChatRole.assistant && !m.isPending);
@@ -363,18 +475,22 @@ class ChatProvider extends ChangeNotifier {
   }
 
   Future<void> deleteMessage(String messageId) async {
+    if (_disposed) return;
     try {
       await _dbService.deleteMessage(messageId);
-      _messages.removeWhere((m) => m.id == messageId);
-      notifyListeners();
+      if (!_disposed) {
+        _messages.removeWhere((m) => m.id == messageId);
+        _safeNotifyListeners();
+      }
     } catch (e) {
       // Error deleting message
     }
   }
 
   Future<void> editMessage(String messageId, String newContent) async {
+    if (_disposed) return;
     final index = _messages.indexWhere((m) => m.id == messageId);
-    if (index != -1 && _messages[index].role == ChatRole.user) {
+    if (index != -1 && _messages[index].role == ChatRole.user && !_disposed) {
       final updatedMessage = _messages[index].copyWith(content: newContent);
       _messages[index] = updatedMessage;
       
@@ -394,15 +510,18 @@ class ChatProvider extends ChangeNotifier {
           // Error deleting message
         }
       }
-      _messages.removeRange(index + 1, _messages.length);
-      notifyListeners();
-      
-      // Regenerate response
-      await sendUserMessage(newContent);
+      if (!_disposed) {
+        _messages.removeRange(index + 1, _messages.length);
+        _safeNotifyListeners();
+        
+        // Regenerate response
+        await sendUserMessage(newContent);
+      }
     }
   }
 
   Future<void> resetConversation() async {
+    if (_disposed) return;
     _isSending = false;
     _isStopped = false;
     
@@ -413,14 +532,16 @@ class ChatProvider extends ChangeNotifier {
       // Error deleting messages
     }
     
-    _messages
-      ..clear()
-      ..add(
-        ChatMessage(
-          role: ChatRole.system,
-          content: _systemPrompt,
-        ),
-      );
-    notifyListeners();
+    if (!_disposed) {
+      _messages
+        ..clear()
+        ..add(
+          ChatMessage(
+            role: ChatRole.system,
+            content: _systemPrompt,
+          ),
+        );
+      _safeNotifyListeners();
+    }
   }
 }

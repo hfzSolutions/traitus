@@ -6,6 +6,7 @@ import 'package:traitus/providers/auth_provider.dart';
 import 'package:traitus/providers/chats_list_provider.dart';
 import 'package:traitus/providers/notes_provider.dart';
 import 'package:traitus/providers/theme_provider.dart';
+import 'package:traitus/services/notification_service.dart';
 import 'package:traitus/services/supabase_service.dart';
 import 'package:traitus/services/version_control_service.dart';
 import 'package:traitus/ui/auth_page.dart';
@@ -21,6 +22,9 @@ Future<void> main() async {
   
   // Initialize Supabase
   await SupabaseService.getInstance();
+  
+  // Initialize OneSignal notifications
+  await NotificationService.initialize();
   
   runApp(const MyApp());
 }
