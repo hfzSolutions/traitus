@@ -8,6 +8,7 @@ import 'package:traitus/ui/chat_page.dart';
 import 'package:traitus/ui/notes_page.dart';
 import 'package:traitus/ui/widgets/chat_form_modal.dart';
 import 'package:traitus/ui/widgets/app_avatar.dart';
+import 'package:traitus/ui/widgets/haptic_modal.dart';
 // import 'package:traitus/services/models_service.dart';
 
 class ChatListPage extends StatelessWidget {
@@ -182,7 +183,7 @@ class ChatListPage extends StatelessWidget {
   }
 
   Future<void> _showCreateChatDialog(BuildContext context) async {
-    await showModalBottomSheet(
+    await HapticModal.showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       builder: (context) => ChatFormModal(
@@ -286,7 +287,7 @@ class _ChatListItem extends StatelessWidget {
         ),
       ),
       confirmDismiss: (direction) async {
-        return await showDialog<bool>(
+        return await HapticModal.showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
             title: const Text('Delete Chat'),

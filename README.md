@@ -11,6 +11,7 @@ Modern, cloud-powered AI chat application with user authentication and persisten
 - 🖼️ **Custom Avatars** - Personalize your AI chats with custom avatar images
 - 📝 **Notes** - Save and manage your notes
 - ⚡ **Instant Loading** - Message preloading for instant chat opening (like WhatsApp/Telegram)
+- 🔔 **Push Notifications** - Get notified of new messages (powered by OneSignal)
 - 🎨 **Modern UI** - Material 3 design with light/dark theme support
 - 📱 **Cross-platform** - Works on iOS, Android, Web, macOS, Windows, and Linux
 
@@ -206,6 +207,7 @@ flutter run
 - [Realtime Subscription & Unread Tracking](REALTIME_SUBSCRIPTION.md) - Real-time message updates and unread indicators
 - [Message Caching & UX Improvements](MESSAGE_CACHING_AND_UX.md) - Instant chat loading, message preloading, and standard chat behavior
 - [Streaming Response Feature](STREAMING_RESPONSE_FEATURE.md) - Real-time word-by-word AI responses with streaming
+- [Push Notifications Setup](PUSH_NOTIFICATIONS_SETUP.md) - OneSignal integration for push notifications
 - [Flutter Documentation](https://docs.flutter.dev)
 - [Supabase Documentation](https://supabase.com/docs)
 

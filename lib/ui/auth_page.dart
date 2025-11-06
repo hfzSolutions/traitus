@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:traitus/providers/auth_provider.dart';
 import 'package:traitus/ui/chat_list_page.dart';
+import 'package:traitus/ui/widgets/haptic_modal.dart';
 
 class AuthPage extends StatefulWidget {
   const AuthPage({super.key});
@@ -243,7 +244,7 @@ class _AuthPageState extends State<AuthPage> {
 
   void _showResetPasswordDialog() {
     final emailController = TextEditingController();
-    showDialog(
+    HapticModal.showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Reset Password'),

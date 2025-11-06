@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:provider/provider.dart';
 import 'package:traitus/config/default_ai_config.dart';
+import 'package:traitus/models/ai_chat.dart';
 import 'package:traitus/models/chat_message.dart';
 import 'package:traitus/models/note.dart';
 import 'package:traitus/providers/chat_provider.dart';
@@ -10,6 +11,7 @@ import 'package:traitus/providers/notes_provider.dart';
 import 'package:traitus/providers/chats_list_provider.dart';
 import 'package:traitus/ui/widgets/chat_form_modal.dart';
 import 'package:traitus/ui/widgets/app_avatar.dart';
+import 'package:traitus/ui/widgets/haptic_modal.dart';
 import 'package:traitus/services/models_service.dart';
 import 'package:traitus/services/entitlements_service.dart';
 import 'package:traitus/ui/pro_upgrade_page.dart';
@@ -191,6 +193,16 @@ class _ChatPageState extends State<ChatPage> {
     try {
       final chatProvider = context.read<ChatProvider>();
       
+      // Update last message immediately with user's message (so it shows in chat list right away)
+      if (mounted) {
+        try {
+          final chatsListProvider = context.read<ChatsListProvider>();
+          chatsListProvider.updateLastMessage(widget.chatId, text);
+        } catch (e) {
+          debugPrint('Could not update last message: $e');
+        }
+      }
+      
       // Start sending the message (this will add user message immediately)
       final sendFuture = chatProvider.sendUserMessage(text);
       
@@ -202,17 +214,8 @@ class _ChatPageState extends State<ChatPage> {
       });
       
       // Wait for the response to complete
+      // Note: The last message will be updated again in chat_provider.dart when bot responds
       await sendFuture;
-      
-      // Update the last message in the chat list
-      if (mounted) {
-        try {
-          final chatsListProvider = context.read<ChatsListProvider>();
-          chatsListProvider.updateLastMessage(widget.chatId, text);
-        } catch (e) {
-          debugPrint('Could not update last message: $e');
-        }
-      }
     } catch (e) {
       debugPrint('Error submitting message: $e');
     }
@@ -231,7 +234,7 @@ class _ChatPageState extends State<ChatPage> {
   Future<void> _saveMessageAsNote(String content) async {
     final notesProvider = context.read<NotesProvider>();
 
-    final result = await showModalBottomSheet<Map<String, dynamic>>(
+    final result = await HapticModal.showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
       builder: (context) => _SaveNoteBottomSheet(
@@ -350,7 +353,7 @@ class _ChatPageState extends State<ChatPage> {
     
     if (chat == null) return;
     
-    showModalBottomSheet(
+    HapticModal.showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       builder: (context) => ChatFormModal(
@@ -399,6 +402,85 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
+  void _duplicateBot(BuildContext context) {
+    final chatsListProvider = context.read<ChatsListProvider>();
+    final chat = chatsListProvider.getChatById(widget.chatId);
+    
+    if (chat == null) return;
+    
+    // Create a copy of the chat with "(Copy)" appended to the name
+    // This will be used to pre-populate the form
+    final chatCopy = chat.copyWith(
+      name: '${chat.name} (Copy)',
+      // Reset fields that shouldn't be copied
+      lastMessage: null,
+      lastMessageTime: null,
+      isPinned: false,
+      sortOrder: 0,
+      lastReadAt: null,
+      unreadCount: 0,
+    );
+    
+    HapticModal.showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => ChatFormModal(
+        chat: chatCopy, // Pre-populate with copied chat data
+        isCreating: true, // This is creating a new chat, not editing
+        onSave: ({
+          required String name,
+          required String shortDescription,
+          required String systemPrompt,
+          required String model,
+          String? avatarUrl,
+          required String responseTone,
+          required String responseLength,
+          required String writingStyle,
+          required bool useEmojis,
+        }) async {
+          try {
+            // Create the new duplicated chat with user's edits
+            final duplicatedChat = AiChat(
+              name: name,
+              shortDescription: shortDescription,
+              systemPrompt: systemPrompt,
+              model: model.isNotEmpty ? model : chat.model,
+              avatarUrl: avatarUrl ?? chat.avatarUrl, // Use new avatar if uploaded, otherwise keep original
+              responseTone: responseTone,
+              responseLength: responseLength,
+              writingStyle: writingStyle,
+              useEmojis: useEmojis,
+            );
+            
+            await chatsListProvider.addChat(duplicatedChat);
+            
+            if (context.mounted) {
+              Navigator.pop(context); // Close the modal
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Bot "${name}" created successfully!'),
+                  duration: const Duration(seconds: 2),
+                ),
+              );
+            }
+          } catch (e) {
+            debugPrint('Error duplicating bot: $e');
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Failed to duplicate bot: ${e.toString()}'),
+                  duration: const Duration(seconds: 3),
+                  backgroundColor: Theme.of(context).colorScheme.error,
+                ),
+              );
+            }
+            rethrow; // Re-throw so the modal doesn't close on error
+          }
+        },
+      ),
+    );
+  }
+
   Future<void> _showModelPicker(BuildContext context) async {
     final chatsListProvider = context.read<ChatsListProvider>();
     final chat = chatsListProvider.getChatById(widget.chatId);
@@ -439,7 +521,7 @@ class _ChatPageState extends State<ChatPage> {
       final parentContext = context;
       final chatProvider = context.read<ChatProvider>();
       
-      final selectedModel = await showModalBottomSheet<AiModelInfo>(
+      final selectedModel = await HapticModal.showModalBottomSheet<AiModelInfo>(
         context: context,
         builder: (context) => _ModelPickerBottomSheet(
           models: models,
@@ -480,9 +562,24 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
+  void _showQuickReplySheet(BuildContext context) {
+    final snippets = DefaultAIConfig.getQuickReplySnippets();
+    
+    HapticModal.showModalBottomSheet(
+      context: context,
+      builder: (context) => _QuickReplyBottomSheet(
+        snippets: snippets,
+        onSnippetSelected: (snippet) {
+          Navigator.pop(context);
+          _controller.text = snippet;
+        },
+      ),
+    );
+  }
+
   void _showClearChatDialog(BuildContext context) {
     final theme = Theme.of(context);
-    showDialog(
+    HapticModal.showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Clear All Messages'),
@@ -571,6 +668,8 @@ class _ChatPageState extends State<ChatPage> {
                 _showEditChatDialog(context);
               } else if (value == 'clear') {
                 _showClearChatDialog(context);
+              } else if (value == 'duplicate') {
+                _duplicateBot(context);
               }
             },
             itemBuilder: (context) => [
@@ -581,6 +680,16 @@ class _ChatPageState extends State<ChatPage> {
                     Icon(Icons.edit_outlined),
                     SizedBox(width: 12),
                     Text('Edit Chat Settings'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'duplicate',
+                child: Row(
+                  children: [
+                    Icon(Icons.copy_outlined),
+                    SizedBox(width: 12),
+                    Text('Duplicate Bot'),
                   ],
                 ),
               ),
@@ -711,6 +820,7 @@ class _ChatPageState extends State<ChatPage> {
                 context.read<ChatProvider>().stopGeneration();
               },
               onModelPicker: () => _showModelPicker(context),
+              onQuickReply: () => _showQuickReplySheet(context),
             ),
           ],
         ),
@@ -1232,12 +1342,14 @@ class _InputBar extends StatefulWidget {
     required this.onSend,
     required this.onStop,
     required this.onModelPicker,
+    required this.onQuickReply,
   });
 
   final TextEditingController controller;
   final VoidCallback onSend;
   final VoidCallback onStop;
   final VoidCallback onModelPicker;
+  final VoidCallback onQuickReply;
 
   @override
   State<_InputBar> createState() => _InputBarState();
@@ -1279,6 +1391,13 @@ class _InputBarState extends State<_InputBar> {
                 tooltip: 'Change model',
                 icon: const Icon(Icons.tune),
                 onPressed: isSending ? null : widget.onModelPicker,
+                color: theme.colorScheme.onSurface.withOpacity(0.7),
+              ),
+              const SizedBox(width: 4),
+              IconButton(
+                tooltip: 'Quick replies',
+                icon: const Icon(Icons.reply),
+                onPressed: isSending ? null : widget.onQuickReply,
                 color: theme.colorScheme.onSurface.withOpacity(0.7),
               ),
               const SizedBox(width: 4),
@@ -1738,6 +1857,103 @@ class _ModelPickerBottomSheet extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _QuickReplyBottomSheet extends StatelessWidget {
+  const _QuickReplyBottomSheet({
+    required this.snippets,
+    required this.onSnippetSelected,
+  });
+
+  final List<String> snippets;
+  final void Function(String) onSnippetSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final mediaQuery = MediaQuery.of(context);
+    final maxHeight = mediaQuery.size.height * 0.6;
+
+    return Container(
+      constraints: BoxConstraints(maxHeight: maxHeight),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Handle bar
+          Container(
+            margin: const EdgeInsets.only(top: 12),
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: theme.colorScheme.onSurfaceVariant.withOpacity(0.4),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          // Title
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.reply,
+                  color: theme.colorScheme.primary,
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  'Quick Replies',
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          // Snippets grid
+          Flexible(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: GridView.builder(
+                shrinkWrap: true,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
+                  childAspectRatio: 3,
+                ),
+                itemCount: snippets.length,
+                itemBuilder: (context, index) {
+                  final snippet = snippets[index];
+                  return OutlinedButton(
+                    onPressed: () => onSnippetSelected(snippet),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: Text(
+                      snippet,
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodyMedium,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+          // Bottom padding for safe area
+          SizedBox(height: mediaQuery.padding.bottom),
+        ],
       ),
     );
   }

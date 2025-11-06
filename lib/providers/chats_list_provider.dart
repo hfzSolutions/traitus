@@ -152,9 +152,18 @@ class ChatsListProvider extends ChangeNotifier {
   }
 
   /// Add a message to the cache (for realtime updates)
+  /// Checks for duplicates by message ID to prevent duplicate messages
   void addMessageToCache(String chatId, ChatMessage message) {
     final cached = _messageCache[chatId];
     if (cached != null) {
+      // Check if message with same ID already exists (prevent duplicates)
+      final existingIndex = cached.indexWhere((m) => m.id == message.id);
+      if (existingIndex != -1) {
+        // Update existing message instead of adding duplicate
+        cached[existingIndex] = message;
+        return;
+      }
+      
       // Add to end (newest messages)
       cached.add(message);
       // Keep only last 50 messages in cache
@@ -246,9 +255,14 @@ class ChatsListProvider extends ChangeNotifier {
     try {
       final index = _chats.indexWhere((chat) => chat.id == chatId);
       if (index != -1) {
-        final updatedChat = _chats[index].copyWith(
+        final currentChat = _chats[index];
+        // Preserve unreadCount and lastReadAt when updating last message
+        final updatedChat = currentChat.copyWith(
           lastMessage: message,
           lastMessageTime: DateTime.now(),
+          // Explicitly preserve unreadCount and lastReadAt to prevent accidental reset
+          unreadCount: currentChat.unreadCount,
+          lastReadAt: currentChat.lastReadAt,
         );
         await _dbService.updateChat(updatedChat);
         _chats[index] = updatedChat;

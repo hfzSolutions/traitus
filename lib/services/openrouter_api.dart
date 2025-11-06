@@ -28,6 +28,17 @@ class OpenRouterApi {
     return value;
   }
 
+  /// Get the model for onboarding/assistant finding operations.
+  /// Falls back to the default OPENROUTER_MODEL if ONBOARDING_MODEL is not set.
+  String get _onboardingModel {
+    final value = dotenv.env['ONBOARDING_MODEL'];
+    if (value != null && value.isNotEmpty) {
+      return value;
+    }
+    // Fallback to default model
+    return _model;
+  }
+
   Uri _endpointUri(String path) {
     final baseUrl = dotenv.env['OPENROUTER_BASE_URL'] ?? _defaultBaseUrl;
     return Uri.parse('$baseUrl$path');
@@ -201,6 +212,7 @@ class OpenRouterApi {
 
     final content = await createChatCompletion(
       messages: [system.cast<String, String>(), user.cast<String, String>()],
+      model: _onboardingModel,
       temperature: 0.2,
     );
 
@@ -320,6 +332,7 @@ class OpenRouterApi {
 
     final content = await createChatCompletion(
       messages: [system.cast<String, String>(), user.cast<String, String>()],
+      model: _onboardingModel,
       temperature: 0.7,
     );
 
