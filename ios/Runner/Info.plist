@@ -30,6 +30,10 @@
 	<string>We need access to your camera to take photos for AI chat avatars</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>We need access to your photo library to set AI chat avatars</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>We need access to speech recognition to convert your voice to text</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>We need access to your microphone to record your voice messages</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UIBackgroundModes</key>

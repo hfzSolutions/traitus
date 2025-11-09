@@ -1,7 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:provider/provider.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:image_picker/image_picker.dart';
+import 'package:uuid/uuid.dart';
 import 'package:traitus/config/default_ai_config.dart';
 import 'package:traitus/models/ai_chat.dart';
 import 'package:traitus/models/chat_message.dart';
@@ -14,7 +19,27 @@ import 'package:traitus/ui/widgets/app_avatar.dart';
 import 'package:traitus/ui/widgets/haptic_modal.dart';
 import 'package:traitus/services/models_service.dart';
 import 'package:traitus/services/entitlements_service.dart';
+import 'package:traitus/services/storage_service.dart';
 import 'package:traitus/ui/pro_upgrade_page.dart';
+
+const _uuid = Uuid();
+
+/// Represents an attached image with its upload state
+class _AttachedImage {
+  _AttachedImage({
+    required this.filePath,
+    this.uploadedUrl,
+    this.isUploading = false,
+    this.hasError = false,
+    required this.id,
+  });
+
+  final String filePath;
+  String? uploadedUrl;
+  bool isUploading;
+  bool hasError;
+  final String id; // Unique ID for this attachment
+}
 
 class ChatPage extends StatefulWidget {
   const ChatPage({super.key, required this.chatId});
@@ -28,6 +53,7 @@ class ChatPage extends StatefulWidget {
 class _ChatPageState extends State<ChatPage> {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final GlobalKey<_InputBarState> _inputBarKey = GlobalKey<_InputBarState>();
   late final ChatProvider _chatProvider;
   bool _isInitialScroll = true;
   bool _hasInitialMessagesLoaded = false;
@@ -185,9 +211,14 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  Future<void> _submit(BuildContext context) async {
+  Future<void> _submit(BuildContext context, {List<String>? imageUrls}) async {
     final text = _controller.text;
-    if (text.trim().isEmpty || !mounted) return;
+    // Allow sending if there's text OR images
+    if ((text.trim().isEmpty && (imageUrls == null || imageUrls.isEmpty)) || !mounted) return;
+    
+    // Stop listening if microphone is active
+    _inputBarKey.currentState?.stopListening();
+    
     _controller.clear();
     
     try {
@@ -197,14 +228,19 @@ class _ChatPageState extends State<ChatPage> {
       if (mounted) {
         try {
           final chatsListProvider = context.read<ChatsListProvider>();
-          chatsListProvider.updateLastMessage(widget.chatId, text);
+          final previewText = text.trim().isNotEmpty 
+              ? text 
+              : (imageUrls != null && imageUrls.isNotEmpty 
+                  ? '📷 Image${imageUrls.length > 1 ? 's' : ''}' 
+                  : '');
+          chatsListProvider.updateLastMessage(widget.chatId, previewText);
         } catch (e) {
           debugPrint('Could not update last message: $e');
         }
       }
       
       // Start sending the message (this will add user message immediately)
-      final sendFuture = chatProvider.sendUserMessage(text);
+      final sendFuture = chatProvider.sendUserMessage(text, imageUrls: imageUrls);
       
       // Scroll to show the user's message immediately after it's added
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -562,19 +598,9 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  void _showQuickReplySheet(BuildContext context) {
-    final snippets = DefaultAIConfig.getQuickReplySnippets();
-    
-    HapticModal.showModalBottomSheet(
-      context: context,
-      builder: (context) => _QuickReplyBottomSheet(
-        snippets: snippets,
-        onSnippetSelected: (snippet) {
-          Navigator.pop(context);
-          _controller.text = snippet;
-        },
-      ),
-    );
+  void _sendQuickReply(String text) {
+    _controller.text = text;
+    _submit(context);
   }
 
   void _showClearChatDialog(BuildContext context) {
@@ -771,11 +797,11 @@ class _ChatPageState extends State<ChatPage> {
                             );
                           }
                           
-                          // Get message index (reverse order: last item is at index 0)
+                          // Get message index (reverse order: last item is at highest index)
                           final messageIndex = items.length - 1 - index;
                           final message = items[messageIndex];
                           final isUser = message.role == ChatRole.user;
-                          final isLast = messageIndex == 0; // First item in list is last message
+                          final isLast = messageIndex == items.length - 1; // Last item in array is newest message
                           final isLastAssistant = isLast &&
                               !isUser &&
                               !message.isPending &&
@@ -788,6 +814,9 @@ class _ChatPageState extends State<ChatPage> {
                             onCopy: () => _copyMessage(message.content),
                             onSave: !isUser && !message.isPending && !message.hasError
                                 ? () => _saveMessageAsNote(message.content)
+                                : null,
+                            onQuickReply: isLastAssistant
+                                ? (text) => _sendQuickReply(text)
                                 : null,
                             onRegenerate: isLastAssistant
                                 ? () => chat.regenerateLastResponse()
@@ -814,13 +843,24 @@ class _ChatPageState extends State<ChatPage> {
             ),
             const Divider(height: 1),
             _InputBar(
+              key: _inputBarKey,
               controller: _controller,
-              onSend: () => _submit(context),
+              onSend: (imageUrls) => _submit(context, imageUrls: imageUrls),
               onStop: () {
                 context.read<ChatProvider>().stopGeneration();
               },
               onModelPicker: () => _showModelPicker(context),
-              onQuickReply: () => _showQuickReplySheet(context),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: Text(
+                'AI can make mistakes. Please verify important information.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurface.withOpacity(0.5),
+                  fontSize: 11,
+                ),
+                textAlign: TextAlign.center,
+              ),
             ),
           ],
         ),
@@ -908,6 +948,7 @@ class _MessageBubble extends StatelessWidget {
     this.onSave,
     this.onRegenerate,
     this.onRetry,
+    this.onQuickReply,
     required this.timestamp,
   });
 
@@ -918,6 +959,7 @@ class _MessageBubble extends StatelessWidget {
   final VoidCallback? onSave;
   final VoidCallback? onRegenerate;
   final VoidCallback? onRetry;
+  final void Function(String)? onQuickReply;
   final String timestamp;
 
   @override
@@ -969,6 +1011,7 @@ class _MessageBubble extends StatelessWidget {
                     onSave: onSave,
                     onRegenerate: onRegenerate,
                     onRetry: onRetry,
+                    onQuickReply: onQuickReply,
                   ),
           ],
         ),
@@ -990,6 +1033,9 @@ class _UserBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasImages = message.imageUrls.isNotEmpty;
+    final hasText = message.content.trim().isNotEmpty;
+
     return PopupMenuButton<String>(
       offset: const Offset(0, -40),
       child: DecoratedBox(
@@ -998,29 +1044,84 @@ class _UserBubble extends StatelessWidget {
           borderRadius: BorderRadius.circular(18),
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: MarkdownBody(
-            selectable: true,
-            softLineBreak: true,
-            data: message.content.trim(),
-            styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
-              p: theme.textTheme.bodyLarge?.copyWith(
-                fontSize: 16,
-                color: theme.colorScheme.onPrimaryContainer,
-              ),
-              h1: theme.textTheme.headlineMedium?.copyWith(
-                fontSize: 24,
-                color: theme.colorScheme.onPrimaryContainer,
-              ),
-              h2: theme.textTheme.titleLarge?.copyWith(
-                fontSize: 20,
-                color: theme.colorScheme.onPrimaryContainer,
-              ),
-              h3: theme.textTheme.titleMedium?.copyWith(
-                fontSize: 18,
-                color: theme.colorScheme.onPrimaryContainer,
-              ),
-            ),
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Display images if any
+              if (hasImages) ...[
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: message.imageUrls.map((imageUrl) {
+                    return ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.network(
+                        imageUrl,
+                        width: 200,
+                        height: 200,
+                        fit: BoxFit.cover,
+                        loadingBuilder: (context, child, loadingProgress) {
+                          if (loadingProgress == null) return child;
+                          return Container(
+                            width: 200,
+                            height: 200,
+                            color: theme.colorScheme.surfaceContainerHighest,
+                            child: Center(
+                              child: CircularProgressIndicator(
+                                value: loadingProgress.expectedTotalBytes != null
+                                    ? loadingProgress.cumulativeBytesLoaded /
+                                        loadingProgress.expectedTotalBytes!
+                                    : null,
+                                color: theme.colorScheme.primary,
+                              ),
+                            ),
+                          );
+                        },
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(
+                            width: 200,
+                            height: 200,
+                            color: theme.colorScheme.errorContainer,
+                            child: Icon(
+                              Icons.broken_image,
+                              color: theme.colorScheme.onErrorContainer,
+                            ),
+                          );
+                        },
+                      ),
+                    );
+                  }).toList(),
+                ),
+                if (hasText) const SizedBox(height: 12),
+              ],
+              // Display text if any
+              if (hasText)
+                MarkdownBody(
+                  selectable: true,
+                  softLineBreak: true,
+                  data: message.content.trim(),
+                  styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
+                    p: theme.textTheme.bodyLarge?.copyWith(
+                      fontSize: 16,
+                      color: theme.colorScheme.onPrimaryContainer,
+                    ),
+                    h1: theme.textTheme.headlineMedium?.copyWith(
+                      fontSize: 24,
+                      color: theme.colorScheme.onPrimaryContainer,
+                    ),
+                    h2: theme.textTheme.titleLarge?.copyWith(
+                      fontSize: 20,
+                      color: theme.colorScheme.onPrimaryContainer,
+                    ),
+                    h3: theme.textTheme.titleMedium?.copyWith(
+                      fontSize: 18,
+                      color: theme.colorScheme.onPrimaryContainer,
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
@@ -1043,7 +1144,7 @@ class _UserBubble extends StatelessWidget {
   }
 }
 
-class _AssistantBubble extends StatelessWidget {
+class _AssistantBubble extends StatefulWidget {
   const _AssistantBubble({
     required this.message,
     required this.theme,
@@ -1051,6 +1152,7 @@ class _AssistantBubble extends StatelessWidget {
     this.onSave,
     this.onRegenerate,
     this.onRetry,
+    this.onQuickReply,
   });
 
   final ChatMessage message;
@@ -1059,17 +1161,94 @@ class _AssistantBubble extends StatelessWidget {
   final VoidCallback? onSave;
   final VoidCallback? onRegenerate;
   final VoidCallback? onRetry;
+  final void Function(String)? onQuickReply;
+
+  @override
+  State<_AssistantBubble> createState() => _AssistantBubbleState();
+}
+
+class _AssistantBubbleState extends State<_AssistantBubble>
+    with SingleTickerProviderStateMixin {
+  bool _showDefaults = false;
+  late AnimationController _animationController;
+  late Animation<double> _fadeAnimation;
+  List<Animation<double>> _buttonAnimations = [];
+  List<String> _previousQuickReplies = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 400),
+      vsync: this,
+    );
+
+    _fadeAnimation = CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeOut,
+    );
+
+    // Track when message was completed
+    if (!widget.message.isPending) {
+      // Wait 2.5 seconds before showing defaults
+      Future.delayed(const Duration(milliseconds: 2500), () {
+        if (mounted) {
+          setState(() {
+            _showDefaults = true;
+          });
+        }
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(_AssistantBubble oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // If message just completed, start the timer
+    if (oldWidget.message.isPending && !widget.message.isPending) {
+      _showDefaults = false;
+      _animationController.reset();
+      // Wait 2.5 seconds before showing defaults
+      Future.delayed(const Duration(milliseconds: 2500), () {
+        if (mounted) {
+          setState(() {
+            _showDefaults = true;
+          });
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+
+  void _startAnimation() {
+    if (!_animationController.isAnimating) {
+      _animationController.forward();
+    }
+  }
+
+  bool _listsEqual(List<String> list1, List<String> list2) {
+    if (list1.length != list2.length) return false;
+    for (int i = 0; i < list1.length; i++) {
+      if (list1[i] != list2[i]) return false;
+    }
+    return true;
+  }
 
   @override
   Widget build(BuildContext context) {
     // Show loading indicator only if pending and no content yet
-    if (message.isPending && message.content.isEmpty) {
-      return _LoadingMessage(theme: theme);
+    if (widget.message.isPending && widget.message.content.isEmpty) {
+      return _LoadingMessage(theme: widget.theme);
     }
 
-    if (message.hasError) {
+    if (widget.message.hasError) {
       return Card(
-        color: theme.colorScheme.errorContainer,
+        color: widget.theme.colorScheme.errorContainer,
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -1080,14 +1259,14 @@ class _AssistantBubble extends StatelessWidget {
                   Icon(
                     Icons.error_outline,
                     size: 20,
-                    color: theme.colorScheme.onErrorContainer,
+                    color: widget.theme.colorScheme.onErrorContainer,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       'Error',
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        color: theme.colorScheme.onErrorContainer,
+                      style: widget.theme.textTheme.titleSmall?.copyWith(
+                        color: widget.theme.colorScheme.onErrorContainer,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -1096,19 +1275,19 @@ class _AssistantBubble extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                message.content,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.onErrorContainer,
+                widget.message.content,
+                style: widget.theme.textTheme.bodyMedium?.copyWith(
+                  color: widget.theme.colorScheme.onErrorContainer,
                 ),
               ),
-              if (onRetry != null) ...[
+              if (widget.onRetry != null) ...[
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
-                  onPressed: onRetry,
+                  onPressed: widget.onRetry,
                   icon: const Icon(Icons.refresh, size: 18),
                   label: const Text('Retry'),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: theme.colorScheme.onErrorContainer,
+                    foregroundColor: widget.theme.colorScheme.onErrorContainer,
                   ),
                 ),
               ],
@@ -1118,100 +1297,228 @@ class _AssistantBubble extends StatelessWidget {
       );
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: MarkdownBody(
-                  selectable: true,
-                  softLineBreak: true,
-                  data: message.content.trim().isEmpty 
-                      ? '...' 
-                      : message.content.trim(),
-                  styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
-                    p: theme.textTheme.bodyLarge?.copyWith(
-                      fontSize: 16,
-                    ),
-                    h1: theme.textTheme.headlineMedium?.copyWith(
-                      fontSize: 24,
-                    ),
-                    h2: theme.textTheme.titleLarge?.copyWith(
-                      fontSize: 20,
-                    ),
-                    h3: theme.textTheme.titleMedium?.copyWith(
-                      fontSize: 18,
+    return Consumer<ChatProvider>(
+      builder: (context, chatProvider, _) {
+        // Get quick replies - wait for API suggestions first
+        final aiGeneratedReplies = chatProvider.quickReplies;
+        final shouldWait = chatProvider.shouldWaitForQuickReplies;
+        
+        // Only show defaults if we're not waiting for API and either:
+        // 1. We have no AI replies AND the timeout has passed, OR
+        // 2. We explicitly set _showDefaults to true
+        final shouldShowDefaults = !shouldWait && (aiGeneratedReplies.isEmpty && _showDefaults);
+        
+        final quickReplies = aiGeneratedReplies.isNotEmpty
+            ? aiGeneratedReplies.take(2).toList()
+            : (shouldShowDefaults 
+                ? DefaultAIConfig.getQuickReplySnippets().take(2).toList().cast<String>()
+                : <String>[]);
+
+        // Update button animations when quick replies change
+        final repliesChanged = _previousQuickReplies.length != quickReplies.length ||
+            !_listsEqual(_previousQuickReplies, quickReplies);
+        
+        if (quickReplies.isNotEmpty) {
+          // Check if we need to update animations (new replies or content changed)
+          if (repliesChanged) {
+            _previousQuickReplies = List.from(quickReplies);
+            _buttonAnimations = List.generate(
+              quickReplies.length,
+              (index) {
+                // Calculate stagger delay - distribute evenly across animation
+                // Each button gets a portion of the animation timeline
+                final totalButtons = quickReplies.length;
+                final staggerDelay = 0.1; // 10% delay between buttons
+                final buttonDuration = (1.0 - (totalButtons - 1) * staggerDelay) / totalButtons;
+                final start = (index * (staggerDelay + buttonDuration)).clamp(0.0, 1.0);
+                final end = (start + buttonDuration).clamp(0.0, 1.0);
+                
+                return Tween<double>(
+                  begin: 0.0,
+                  end: 1.0,
+                ).animate(
+                  CurvedAnimation(
+                    parent: _animationController,
+                    curve: Interval(
+                      start,
+                      end,
+                      curve: Curves.easeOut,
                     ),
                   ),
+                );
+              },
+            );
+            // Reset and start animation when quick replies become available
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                _animationController.reset();
+                _startAnimation();
+              }
+            });
+          }
+        } else {
+          // Clear animations when no quick replies
+          _buttonAnimations = [];
+          _previousQuickReplies = [];
+        }
+        
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Display text content
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: widget.message.content.trim().isNotEmpty
+                            ? MarkdownBody(
+                                selectable: true,
+                                softLineBreak: true,
+                                data: widget.message.content.trim(),
+                                styleSheet: MarkdownStyleSheet.fromTheme(widget.theme).copyWith(
+                                  p: widget.theme.textTheme.bodyLarge?.copyWith(
+                                    fontSize: 16,
+                                  ),
+                                  h1: widget.theme.textTheme.headlineMedium?.copyWith(
+                                    fontSize: 24,
+                                  ),
+                                  h2: widget.theme.textTheme.titleLarge?.copyWith(
+                                    fontSize: 20,
+                                  ),
+                                  h3: widget.theme.textTheme.titleMedium?.copyWith(
+                                    fontSize: 18,
+                                  ),
+                                ),
+                              )
+                            : const Text('...'),
+                      ),
+                      // Show blinking cursor when message is still pending
+                      if (widget.message.isPending && widget.message.content.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 2),
+                          child: _StreamingCursor(theme: widget.theme),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.only(left: 8),
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: Icon(
+                      Icons.content_copy,
+                      size: 16,
+                      color: widget.theme.colorScheme.onSurface.withOpacity(0.6),
+                    ),
+                    onPressed: widget.onCopy,
+                    tooltip: 'Copy',
+                    constraints: const BoxConstraints(),
+                    padding: const EdgeInsets.all(4),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  if (widget.onSave != null) ...[
+                    const SizedBox(width: 4),
+                    IconButton(
+                      icon: Icon(
+                        Icons.bookmark_outline,
+                        size: 16,
+                        color: widget.theme.colorScheme.onSurface.withOpacity(0.6),
+                      ),
+                      onPressed: widget.onSave,
+                      tooltip: 'Save to notes',
+                      constraints: const BoxConstraints(),
+                      padding: const EdgeInsets.all(4),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
+                  if (widget.onRegenerate != null) ...[
+                    const SizedBox(width: 4),
+                    IconButton(
+                      icon: Icon(
+                        Icons.refresh,
+                        size: 16,
+                        color: widget.theme.colorScheme.onSurface.withOpacity(0.6),
+                      ),
+                      onPressed: widget.onRegenerate,
+                      tooltip: 'Regenerate',
+                      constraints: const BoxConstraints(),
+                      padding: const EdgeInsets.all(4),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            // Quick reply buttons - show up to 2 suggestions (only when message is complete)
+            // Placed below action buttons following standard chat UI patterns
+            if (widget.onQuickReply != null && quickReplies.isNotEmpty && !widget.message.isPending) ...[
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: AnimatedBuilder(
+                  animation: _animationController,
+                  builder: (context, child) {
+                    return Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: quickReplies.asMap().entries.map((entry) {
+                        final index = entry.key;
+                        final reply = entry.value;
+                        final animation = index < _buttonAnimations.length
+                            ? _buttonAnimations[index]
+                            : _fadeAnimation;
+                        
+                        // Use the same animation for slide to keep them in sync
+                        return FadeTransition(
+                          opacity: animation,
+                          child: SlideTransition(
+                            position: Tween<Offset>(
+                              begin: const Offset(0, 0.2),
+                              end: Offset.zero,
+                            ).animate(animation),
+                            child: OutlinedButton(
+                              onPressed: () => widget.onQuickReply!(reply),
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                minimumSize: const Size(0, 32),
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                              ),
+                              child: Text(
+                                reply,
+                                style: widget.theme.textTheme.bodySmall?.copyWith(
+                                  fontSize: 13,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    );
+                  },
                 ),
               ),
-              // Show blinking cursor when message is still pending
-              if (message.isPending && message.content.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(left: 2),
-                  child: _StreamingCursor(theme: theme),
-                ),
             ],
-          ),
-        ),
-        const SizedBox(height: 4),
-        Padding(
-          padding: const EdgeInsets.only(left: 8),
-          child: Row(
-            children: [
-              IconButton(
-                icon: Icon(
-                  Icons.content_copy,
-                  size: 16,
-                  color: theme.colorScheme.onSurface.withOpacity(0.6),
-                ),
-                onPressed: onCopy,
-                tooltip: 'Copy',
-                constraints: const BoxConstraints(),
-                padding: const EdgeInsets.all(4),
-                visualDensity: VisualDensity.compact,
-              ),
-              if (onSave != null) ...[
-                const SizedBox(width: 4),
-                IconButton(
-                  icon: Icon(
-                    Icons.bookmark_outline,
-                    size: 16,
-                    color: theme.colorScheme.onSurface.withOpacity(0.6),
-                  ),
-                  onPressed: onSave,
-                  tooltip: 'Save to notes',
-                  constraints: const BoxConstraints(),
-                  padding: const EdgeInsets.all(4),
-                  visualDensity: VisualDensity.compact,
-                ),
-              ],
-              if (onRegenerate != null) ...[
-                const SizedBox(width: 4),
-                IconButton(
-                  icon: Icon(
-                    Icons.refresh,
-                    size: 16,
-                    color: theme.colorScheme.onSurface.withOpacity(0.6),
-                  ),
-                  onPressed: onRegenerate,
-                  tooltip: 'Regenerate',
-                  constraints: const BoxConstraints(),
-                  padding: const EdgeInsets.all(4),
-                  visualDensity: VisualDensity.compact,
-                ),
-              ],
-            ],
-          ),
-        ),
-      ],
+          ],
+        );
+      },
     );
   }
 }
+
 
 class _LoadingMessage extends StatelessWidget {
   const _LoadingMessage({required this.theme});
@@ -1338,38 +1645,428 @@ class _LoadMoreIndicator extends StatelessWidget {
 
 class _InputBar extends StatefulWidget {
   const _InputBar({
+    super.key,
     required this.controller,
     required this.onSend,
     required this.onStop,
     required this.onModelPicker,
-    required this.onQuickReply,
   });
 
   final TextEditingController controller;
-  final VoidCallback onSend;
+  final void Function(List<String>?) onSend; // Now accepts optional image paths
   final VoidCallback onStop;
   final VoidCallback onModelPicker;
-  final VoidCallback onQuickReply;
 
   @override
   State<_InputBar> createState() => _InputBarState();
 }
 
 class _InputBarState extends State<_InputBar> {
+  static const int _maxImagesPerMessage = 5; // Maximum number of images per message
+  
+  final stt.SpeechToText _speech = stt.SpeechToText();
+  final ImagePicker _imagePicker = ImagePicker();
+  final StorageService _storageService = StorageService();
+  bool _isListening = false;
+  bool _isAvailable = false;
+  String _baseText = '';
+  String _partialText = '';
+  bool _isUpdatingFromSpeech = false;
+  final List<_AttachedImage> _attachedImages = []; // Store attached images with upload state
+
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_onTextChanged);
+    _initializeSpeech();
+  }
+  
+  Future<void> _removeImage(int index) async {
+    if (index < 0 || index >= _attachedImages.length) return;
+    
+    final image = _attachedImages[index];
+    
+    // Delete from storage if already uploaded
+    if (image.uploadedUrl != null && image.uploadedUrl!.isNotEmpty) {
+      try {
+        await _storageService.deleteChatImage(image.uploadedUrl!);
+      } catch (e) {
+        debugPrint('Failed to delete image from storage: $e');
+        // Continue to remove from UI even if deletion fails
+      }
+    }
+    
+    setState(() {
+      _attachedImages.removeAt(index);
+    });
+  }
+  
+  Future<void> _uploadImage(_AttachedImage image) async {
+    // Mark as uploading
+    setState(() {
+      image.isUploading = true;
+      image.hasError = false;
+    });
+    
+    try {
+      // Upload to Supabase Storage
+      final uploadedUrl = await _storageService.uploadChatImage(
+        image.filePath,
+        image.id,
+      );
+      
+      // Update with uploaded URL
+      if (mounted) {
+        setState(() {
+          image.uploadedUrl = uploadedUrl;
+          image.isUploading = false;
+          image.hasError = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to upload image: $e');
+      if (mounted) {
+        setState(() {
+          image.isUploading = false;
+          image.hasError = true;
+        });
+        
+        // Show error toast
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to upload image: ${e.toString()}'),
+            duration: const Duration(seconds: 3),
+            action: SnackBarAction(
+              label: 'Retry',
+              onPressed: () => _uploadImage(image),
+            ),
+          ),
+        );
+      }
+    }
+  }
+  
+  Future<void> _handleSend() async {
+    final text = widget.controller.text.trim();
+    // Allow sending if there's text OR images
+    if (text.isEmpty && _attachedImages.isEmpty) return;
+    
+    // If there are images, validate model support before sending
+    final hasImages = _attachedImages.any((img) => img.uploadedUrl != null && !img.hasError);
+    if (hasImages) {
+      try {
+        final chatProvider = context.read<ChatProvider>();
+        final supportsImageInput = await chatProvider.getCurrentModelSupportsImageInput();
+        
+        if (!supportsImageInput && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Current model does not support image inputs. Please switch to a multimodal model.'),
+              duration: const Duration(seconds: 3),
+              action: SnackBarAction(
+                label: 'OK',
+                onPressed: () {},
+              ),
+            ),
+          );
+          return;
+        }
+      } catch (e) {
+        debugPrint('Error checking model support: $e');
+        // Continue anyway - let the API handle the error
+      }
+    }
+    
+    // Get uploaded URLs (only send images that are successfully uploaded)
+    final uploadedUrls = _attachedImages
+        .where((img) => img.uploadedUrl != null && img.uploadedUrl!.isNotEmpty && !img.hasError)
+        .map((img) => img.uploadedUrl!)
+        .toList();
+    
+    // Check if there are images still uploading
+    final hasUploadingImages = _attachedImages.any((img) => img.isUploading);
+    if (hasUploadingImages && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please wait for images to finish uploading before sending.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+    
+    // Check if there are failed uploads
+    final hasFailedUploads = _attachedImages.any((img) => img.hasError);
+    if (hasFailedUploads && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Some images failed to upload. Please remove them or retry before sending.'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+    
+    // Send with both text and images (using uploaded URLs, not file paths)
+    widget.onSend(uploadedUrls.isEmpty ? null : uploadedUrls);
+    
+    // Clear text and images after sending
+    widget.controller.clear();
+    setState(() {
+      _attachedImages.clear();
+    });
   }
 
   @override
   void dispose() {
     widget.controller.removeListener(_onTextChanged);
+    _speech.stop();
     super.dispose();
   }
 
   void _onTextChanged() {
     setState(() {});
+  }
+
+  Future<void> _initializeSpeech() async {
+    bool available = await _speech.initialize(
+      onError: (error) {
+        debugPrint('Speech recognition error: $error');
+        setState(() {
+          _isListening = false;
+        });
+      },
+      onStatus: (status) {
+        debugPrint('Speech recognition status: $status');
+        if (status == 'done' || status == 'notListening') {
+          setState(() {
+            _isListening = false;
+            _partialText = '';
+          });
+        }
+      },
+    );
+    setState(() {
+      _isAvailable = available;
+    });
+  }
+
+  void _showImageSourcePicker() {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('Take Photo'),
+              subtitle: const Text('Capture a new photo with camera'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickImage(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Choose from Gallery'),
+              subtitle: const Text('Select an image from your gallery'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickImage(ImageSource.gallery);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickImage(ImageSource source) async {
+    try {
+      // Check if we've reached the maximum number of images
+      if (_attachedImages.length >= _maxImagesPerMessage) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Maximum $_maxImagesPerMessage images per message. Please remove some images first.'),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+        return;
+      }
+      
+      final XFile? image = await _imagePicker.pickImage(
+        source: source,
+        imageQuality: 85,
+      );
+      
+      if (image != null) {
+        // Create attached image object
+        final attachedImage = _AttachedImage(
+          filePath: image.path,
+          id: _uuid.v4(),
+        );
+        
+        setState(() {
+          _attachedImages.add(attachedImage);
+        });
+        
+        // Start uploading immediately
+        _uploadImage(attachedImage);
+        
+        // Show toast if maximum limit reached
+        if (_attachedImages.length >= _maxImagesPerMessage && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Maximum $_maxImagesPerMessage images reached. You can send this message or remove some images to add more.'),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+        
+        // Check and warn if model doesn't support images (but still allow attachment)
+        final chatProvider = context.read<ChatProvider>();
+        final supportsImageInput = await chatProvider.getCurrentModelSupportsImageInput();
+        
+        if (!supportsImageInput && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Current model does not support image inputs. Please switch to a multimodal model before sending.'),
+              duration: const Duration(seconds: 3),
+              action: SnackBarAction(
+                label: 'OK',
+                onPressed: () {},
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Error picking image: $e');
+      if (mounted) {
+        String errorMessage = 'Failed to pick image';
+        if (e.toString().contains('permission')) {
+          errorMessage = 'Camera permission denied. Please enable camera access in settings.';
+        } else {
+          errorMessage = 'Failed to pick image: ${e.toString()}';
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMessage),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  void _showInputOptions(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.image),
+                title: const Text('Add Image'),
+                subtitle: const Text('Take photo or choose from gallery'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _showImageSourcePicker();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.tune),
+                title: const Text('Change Model'),
+                subtitle: const Text('Select AI model for this chat'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  widget.onModelPicker();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _toggleListening() async {
+    if (!_isAvailable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Speech recognition is not available on this device'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    if (_isListening) {
+      await _speech.stop();
+      setState(() {
+        _isListening = false;
+        _partialText = '';
+      });
+    } else {
+      setState(() {
+        _isListening = true;
+        _baseText = widget.controller.text;
+        _partialText = '';
+      });
+      
+      await _speech.listen(
+        onResult: (result) {
+          // Don't update if we're no longer listening (e.g., message was sent)
+          if (!_isListening) return;
+          
+          setState(() {
+            _isUpdatingFromSpeech = true;
+            if (result.finalResult) {
+              // Final result: append to base text
+              final newText = _baseText.isEmpty
+                  ? result.recognizedWords
+                  : '$_baseText ${result.recognizedWords}';
+              widget.controller.text = newText;
+              _baseText = newText;
+              _partialText = '';
+            } else {
+              // Partial result: show base text + partial text
+              _partialText = result.recognizedWords;
+              final displayText = _baseText.isEmpty
+                  ? _partialText
+                  : '$_baseText $_partialText';
+              widget.controller.text = displayText;
+            }
+            _isUpdatingFromSpeech = false;
+          });
+        },
+        listenFor: const Duration(seconds: 30),
+        pauseFor: const Duration(seconds: 3),
+        localeId: 'en_US',
+        cancelOnError: true,
+        partialResults: true,
+      );
+    }
+  }
+
+  /// Stop listening to microphone input
+  /// This is called when a message is sent to ensure the microphone stops
+  void stopListening() {
+    if (_isListening) {
+      // Set listening to false first to prevent any pending callbacks from updating the controller
+      setState(() {
+        _isListening = false;
+        _partialText = '';
+      });
+      _speech.stop();
+    }
   }
 
   @override
@@ -1379,63 +2076,397 @@ class _InputBarState extends State<_InputBar> {
     final screenWidth = MediaQuery.of(context).size.width;
     final maxWidth = screenWidth > 768 ? 768.0 : screenWidth;
     final hasText = widget.controller.text.trim().isNotEmpty;
+    final hasUploadedImages = _attachedImages.any((img) => img.uploadedUrl != null && !img.hasError);
+    final hasUploadingImages = _attachedImages.any((img) => img.isUploading);
+    final hasFailedUploads = _attachedImages.any((img) => img.hasError);
+    final hasContent = hasText || hasUploadedImages;
+    final canSend = hasContent && !hasUploadingImages && !hasFailedUploads;
+
+    // Build prefix icons (action buttons on the left)
+    // Options button: only show when there's no text
+    // Mic button: always show when available (especially when listening)
+    // Image button: always show (validation happens on click)
+    final prefixIconsWidget = (!hasText || _isAvailable)
+        ? Padding(
+            padding: const EdgeInsets.only(left: 8, right: 8),
+            child: SizedBox(
+              height: 24,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  // Image button - always show (validation on click)
+                  IconButton(
+                    tooltip: _attachedImages.length >= _maxImagesPerMessage
+                        ? 'Maximum $_maxImagesPerMessage images reached'
+                        : 'Attach image (${_attachedImages.length}/$_maxImagesPerMessage)',
+                    icon: const Icon(Icons.image_outlined),
+                    onPressed: isSending ? null : _showImageSourcePicker, // Show camera/gallery options
+                    color: _attachedImages.length >= _maxImagesPerMessage
+                        ? theme.colorScheme.onSurface.withOpacity(0.3)
+                        : theme.colorScheme.onSurface.withOpacity(0.7),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    iconSize: 22,
+                  ),
+                  if (!hasText || _isAvailable) const SizedBox(width: 8),
+                  // Options button - only show when there's no text
+                  if (!hasText) ...[
+                    IconButton(
+                      tooltip: 'Options',
+                      icon: const Icon(Icons.add_circle_outline),
+                      onPressed: isSending ? null : () => _showInputOptions(context),
+                      color: theme.colorScheme.onSurface.withOpacity(0.7),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      iconSize: 22,
+                    ),
+                  ],
+                  // Mic button - always show when available
+                  if (_isAvailable) ...[
+                    const SizedBox(width: 8),
+                    IconButton(
+                      tooltip: _isListening ? 'Stop recording' : 'Start voice input',
+                      icon: Icon(_isListening ? Icons.mic : Icons.mic_none),
+                      onPressed: isSending ? null : _toggleListening,
+                      color: _isListening
+                          ? theme.colorScheme.error
+                          : theme.colorScheme.onSurface.withOpacity(0.7),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      iconSize: 22,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          )
+        : null;
 
     return Center(
       child: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: maxWidth),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 16),
-          child: Row(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              IconButton(
-                tooltip: 'Change model',
-                icon: const Icon(Icons.tune),
-                onPressed: isSending ? null : widget.onModelPicker,
-                color: theme.colorScheme.onSurface.withOpacity(0.7),
-              ),
-              const SizedBox(width: 4),
-              IconButton(
-                tooltip: 'Quick replies',
-                icon: const Icon(Icons.reply),
-                onPressed: isSending ? null : widget.onQuickReply,
-                color: theme.colorScheme.onSurface.withOpacity(0.7),
-              ),
-              const SizedBox(width: 4),
-              Expanded(
+              // Show attached image previews
+              if (_attachedImages.isNotEmpty)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  height: 80,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _attachedImages.length,
+                    itemBuilder: (context, index) {
+                      final image = _attachedImages[index];
+                      return Container(
+                        margin: const EdgeInsets.only(right: 8),
+                        width: 80,
+                        height: 80,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: image.hasError
+                                ? theme.colorScheme.error.withOpacity(0.5)
+                                : theme.colorScheme.outline.withOpacity(0.2),
+                          ),
+                        ),
+                        child: Stack(
+                          children: [
+                            // Show image preview or loading/error state
+                            if (image.isUploading)
+                              // Loading state
+                              Container(
+                                width: 80,
+                                height: 80,
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.surfaceContainerHighest,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Center(
+                                  child: SizedBox(
+                                    width: 24,
+                                    height: 24,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: theme.colorScheme.primary,
+                                    ),
+                                  ),
+                                ),
+                              )
+                            else if (image.hasError)
+                              // Error state
+                              Container(
+                                width: 80,
+                                height: 80,
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.errorContainer,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.error_outline,
+                                      size: 20,
+                                      color: theme.colorScheme.onErrorContainer,
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'Failed',
+                                      style: theme.textTheme.bodySmall?.copyWith(
+                                        fontSize: 10,
+                                        color: theme.colorScheme.onErrorContainer,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            else if (image.uploadedUrl != null)
+                              // Successfully uploaded - show from URL
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Image.network(
+                                  image.uploadedUrl!,
+                                  width: 80,
+                                  height: 80,
+                                  fit: BoxFit.cover,
+                                  loadingBuilder: (context, child, loadingProgress) {
+                                    if (loadingProgress == null) return child;
+                                    return Container(
+                                      width: 80,
+                                      height: 80,
+                                      color: theme.colorScheme.surfaceContainerHighest,
+                                      child: Center(
+                                        child: CircularProgressIndicator(
+                                          value: loadingProgress.expectedTotalBytes != null
+                                              ? loadingProgress.cumulativeBytesLoaded /
+                                                  loadingProgress.expectedTotalBytes!
+                                              : null,
+                                          strokeWidth: 2,
+                                          color: theme.colorScheme.primary,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return Container(
+                                      width: 80,
+                                      height: 80,
+                                      color: theme.colorScheme.errorContainer,
+                                      child: Icon(
+                                        Icons.broken_image,
+                                        color: theme.colorScheme.onErrorContainer,
+                                      ),
+                                    );
+                                  },
+                                ),
+                              )
+                            else
+                              // Fallback: show local file
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Image.file(
+                                  File(image.filePath),
+                                  width: 80,
+                                  height: 80,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return Container(
+                                      width: 80,
+                                      height: 80,
+                                      color: theme.colorScheme.errorContainer,
+                                      child: Icon(
+                                        Icons.broken_image,
+                                        color: theme.colorScheme.onErrorContainer,
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            // Remove button
+                            Positioned(
+                              top: 4,
+                              right: 4,
+                              child: Material(
+                                color: Colors.black54,
+                                borderRadius: BorderRadius.circular(12),
+                                child: InkWell(
+                                  onTap: () => _removeImage(index),
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: const Padding(
+                                    padding: EdgeInsets.all(4),
+                                    child: Icon(
+                                      Icons.close,
+                                      size: 16,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            // Retry button for failed uploads
+                            if (image.hasError)
+                              Positioned(
+                                bottom: 4,
+                                left: 4,
+                                child: Material(
+                                  color: theme.colorScheme.primary,
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: InkWell(
+                                    onTap: () => _uploadImage(image),
+                                    borderRadius: BorderRadius.circular(12),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(4),
+                                      child: Icon(
+                                        Icons.refresh,
+                                        size: 16,
+                                        color: theme.colorScheme.onPrimary,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              // Text input field
+              AnimatedSize(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeInOut,
                 child: TextField(
-                  controller: widget.controller,
-                  minLines: 1,
-                  maxLines: 6,
-                  textInputAction: TextInputAction.send,
-                  onSubmitted: (_) => widget.onSend(),
-                  enabled: !isSending,
-                  style: theme.textTheme.bodyLarge?.copyWith(
-                    fontSize: 16,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: isSending ? 'AI is thinking…' : 'Message…',
-                    filled: true,
-                    fillColor: theme.colorScheme.surfaceContainerHighest,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  ),
+                controller: widget.controller,
+                minLines: 1,
+                maxLines: 6,
+                textInputAction: TextInputAction.send,
+                onSubmitted: (_) => _handleSend(),
+            enabled: !isSending,
+            onChanged: (text) {
+              // If user manually edits text while listening, update base text
+              // Only update if this change wasn't from speech recognition
+              if (_isListening && !_isUpdatingFromSpeech) {
+                // Check if the text doesn't match our expected pattern
+                final expectedText = _baseText.isEmpty
+                    ? _partialText
+                    : '$_baseText $_partialText';
+                if (text != expectedText) {
+                  // User manually edited - update base text
+                  _baseText = text;
+                  _partialText = '';
+                }
+              }
+            },
+            style: theme.textTheme.bodyLarge?.copyWith(
+              fontSize: 16,
+            ),
+            decoration: InputDecoration(
+              hintText: _isListening
+                  ? 'Listening...'
+                  : isSending
+                      ? 'AI is thinking…'
+                      : 'Message…',
+              filled: true,
+              fillColor: theme.colorScheme.surfaceContainerHighest,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(24),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(24),
+                borderSide: BorderSide(
+                  color: theme.colorScheme.outline.withOpacity(0.2),
                 ),
               ),
-              const SizedBox(width: 8),
-              if (isSending)
-                IconButton.filledTonal(
-                  tooltip: 'Stop generating',
-                  onPressed: widget.onStop,
-                  icon: const Icon(Icons.stop_circle_outlined),
-                )
-              else
-                IconButton.filled(
-                  tooltip: 'Send message',
-                  onPressed: hasText ? widget.onSend : null,
-                  icon: const Icon(Icons.arrow_upward_rounded),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(24),
+                borderSide: BorderSide(
+                  color: theme.colorScheme.primary,
+                  width: 2,
                 ),
+              ),
+              contentPadding: EdgeInsets.fromLTRB(
+                prefixIconsWidget != null ? 8 : 20,
+                16,
+                20,
+                16,
+              ),
+              prefixIcon: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 200),
+                switchInCurve: Curves.easeOut,
+                switchOutCurve: Curves.easeIn,
+                transitionBuilder: (child, animation) {
+                  return FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(-0.2, 0),
+                        end: Offset.zero,
+                      ).animate(CurvedAnimation(
+                        parent: animation,
+                        curve: Curves.easeOut,
+                      )),
+                      child: child,
+                    ),
+                  );
+                },
+                child: prefixIconsWidget != null
+                    ? SizedBox(
+                        key: const ValueKey('prefix-icons'),
+                        child: prefixIconsWidget,
+                      )
+                    : const SizedBox.shrink(key: ValueKey('empty')),
+              ),
+              prefixIconConstraints: const BoxConstraints(
+                minWidth: 0,
+                minHeight: 0,
+              ),
+              suffixIcon: Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: isSending
+                    ? IconButton(
+                        tooltip: 'Stop generating',
+                        onPressed: widget.onStop,
+                        icon: Icon(
+                          Icons.stop_circle_outlined,
+                          color: theme.colorScheme.error,
+                        ),
+                        style: IconButton.styleFrom(
+                          backgroundColor: theme.colorScheme.errorContainer,
+                        ),
+                      )
+                    : IconButton(
+                        tooltip: hasUploadingImages
+                            ? 'Waiting for images to upload...'
+                            : hasFailedUploads
+                                ? 'Some images failed to upload'
+                                : 'Send message',
+                        onPressed: canSend ? _handleSend : null,
+                        icon: Icon(
+                          Icons.arrow_upward_rounded,
+                          color: canSend
+                              ? theme.colorScheme.onPrimary
+                              : theme.colorScheme.onSurface.withOpacity(0.3),
+                        ),
+                        style: IconButton.styleFrom(
+                          backgroundColor: canSend
+                              ? theme.colorScheme.primary
+                              : theme.colorScheme.surfaceContainerHighest,
+                          shape: const CircleBorder(),
+                        ),
+                      ),
+              ),
+              suffixIconConstraints: const BoxConstraints(
+                minWidth: 40,
+                minHeight: 40,
+              ),
+            ),
+                ),
+              ),
             ],
           ),
         ),
@@ -1862,99 +2893,3 @@ class _ModelPickerBottomSheet extends StatelessWidget {
   }
 }
 
-class _QuickReplyBottomSheet extends StatelessWidget {
-  const _QuickReplyBottomSheet({
-    required this.snippets,
-    required this.onSnippetSelected,
-  });
-
-  final List<String> snippets;
-  final void Function(String) onSnippetSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final mediaQuery = MediaQuery.of(context);
-    final maxHeight = mediaQuery.size.height * 0.6;
-
-    return Container(
-      constraints: BoxConstraints(maxHeight: maxHeight),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Handle bar
-          Container(
-            margin: const EdgeInsets.only(top: 12),
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: theme.colorScheme.onSurfaceVariant.withOpacity(0.4),
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          // Title
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.reply,
-                  color: theme.colorScheme.primary,
-                ),
-                const SizedBox(width: 12),
-                Text(
-                  'Quick Replies',
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const Divider(height: 1),
-          // Snippets grid
-          Flexible(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: GridView.builder(
-                shrinkWrap: true,
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 12,
-                  childAspectRatio: 3,
-                ),
-                itemCount: snippets.length,
-                itemBuilder: (context, index) {
-                  final snippet = snippets[index];
-                  return OutlinedButton(
-                    onPressed: () => onSnippetSelected(snippet),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: Text(
-                      snippet,
-                      textAlign: TextAlign.center,
-                      style: theme.textTheme.bodyMedium,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  );
-                },
-              ),
-            ),
-          ),
-          // Bottom padding for safe area
-          SizedBox(height: mediaQuery.padding.bottom),
-        ],
-      ),
-    );
-  }
-}

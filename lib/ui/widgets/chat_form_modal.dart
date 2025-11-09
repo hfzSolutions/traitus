@@ -128,8 +128,9 @@ class _ChatFormModalState extends State<ChatFormModal> {
             slug: 'openrouter:env-default',
             displayName: 'Basic Model',
             tier: 'basic',
-            enabled: true,
-          ),
+          enabled: true,
+          supportsImageInput: false, // Default to false for fallback
+        ),
         );
         _selectedModelSlug = basic.slug;
       }

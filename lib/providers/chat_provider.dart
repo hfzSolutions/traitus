@@ -46,6 +46,8 @@ class ChatProvider extends ChangeNotifier {
   final ChatsListProvider? _chatsListProvider; // For accessing message cache
 
   final List<ChatMessage> _messages;
+  List<String> _quickReplies = [];
+  DateTime? _quickRepliesGenerationStart;
 
   bool _isSending = false;
   bool _isStopped = false;
@@ -56,12 +58,25 @@ class ChatProvider extends ChangeNotifier {
 
   String get chatId => _chatId;
   List<ChatMessage> get messages => List.unmodifiable(_messages);
+  List<String> get quickReplies => List.unmodifiable(_quickReplies);
   bool get isSending => _isSending;
   bool get isLoading => _isLoading;
   bool get isLoadingOlder => _isLoadingOlder;
   bool get hasMoreMessages => _hasMoreMessages;
   bool get hasMessages => _messages.where((m) => m.role != ChatRole.system).isNotEmpty;
   String get currentModel => _model;
+  
+  /// Check if the current model supports image inputs (multimodal input)
+  /// Returns false if model info cannot be retrieved (safe default)
+  Future<bool> getCurrentModelSupportsImageInput() async {
+    try {
+      final catalog = ModelCatalogService();
+      final modelInfo = await catalog.getModelBySlug(_model);
+      return modelInfo?.supportsImageInput ?? false;
+    } catch (_) {
+      return false; // Safe default: assume no image input support if we can't check
+    }
+  }
 
   @override
   void dispose() {
@@ -145,6 +160,7 @@ class ChatProvider extends ChangeNotifier {
           displayName: 'Current',
           tier: 'basic',
           enabled: true,
+          supportsImageInput: false, // Default to false for fallback
         ),
       );
       if (current.isPremium && !_disposed) {
@@ -280,14 +296,23 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> sendUserMessage(String content) async {
-    if (content.trim().isEmpty || _isSending) return;
+  Future<void> sendUserMessage(String content, {List<String>? imageUrls}) async {
+    // Allow sending if there's content OR images
+    // Note: imageUrls are now pre-uploaded URLs, not file paths
+    if ((content.trim().isEmpty && (imageUrls == null || imageUrls.isEmpty)) || _isSending) return;
 
     // Ensure selected model is allowed for current plan
     await _ensureModelAllowed();
     // Note: We continue even if disposed - we want to save the message to DB
 
-    final userMessage = ChatMessage(role: ChatRole.user, content: content);
+    // Images are already uploaded, so we can use the URLs directly
+    final uploadedImageUrls = imageUrls ?? [];
+
+    final userMessage = ChatMessage(
+      role: ChatRole.user,
+      content: content,
+      imageUrls: uploadedImageUrls,
+    );
     // Only update in-memory messages if not disposed (for UI)
     if (!_disposed) {
       _messages.add(userMessage);
@@ -304,11 +329,20 @@ class ChatProvider extends ChangeNotifier {
       // Error saving user message
     }
 
-    final pendingMessage = ChatMessage(role: ChatRole.assistant, content: '', isPending: true);
+    final pendingMessage = ChatMessage(role: ChatRole.assistant, content: '', isPending: true, model: _model);
+    final pendingId = pendingMessage.id;
+    
+    // Create pending message in database first so we can update it with images as they arrive
+    try {
+      await _dbService.createMessage(_chatId, pendingMessage);
+    } catch (e) {
+      debugPrint('Error creating pending message: $e');
+      // Continue anyway - we'll save at the end
+    }
+    
     if (!_disposed) {
       _messages.add(pendingMessage);
     }
-    final pendingId = pendingMessage.id;
     _isSending = true;
     _isStopped = false;
     _safeNotifyListeners();
@@ -384,9 +418,10 @@ class ChatProvider extends ChangeNotifier {
           }
         }
         
-        // Always save assistant message to database (so realtime subscription can pick it up)
+        // Always update assistant message in database (it was created as pending, now update to final)
+        // This ensures images and final content are saved
         try {
-          await _dbService.createMessage(_chatId, assistantMessage);
+          await _dbService.updateMessage(assistantMessage);
           // Always add to cache (even if disposed) so realtime can show it in chat list
           if (_chatsListProvider != null) {
             _chatsListProvider.addMessageToCache(_chatId, assistantMessage);
@@ -400,6 +435,11 @@ class ChatProvider extends ChangeNotifier {
             HapticFeedback.mediumImpact();
           } catch (e) {
             // Haptic feedback is optional, ignore errors
+          }
+          
+          // Generate quick replies asynchronously (non-blocking)
+          if (!_disposed) {
+            _generateQuickReplies(assistantMessage);
           }
         } catch (e) {
           // Error saving assistant message
@@ -531,10 +571,73 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
+  /// Generate quick replies based on the last assistant message
+  /// This runs asynchronously and doesn't block the UI
+  Future<void> _generateQuickReplies(ChatMessage assistantMessage) async {
+    if (_disposed) return;
+    
+    // Mark when generation started
+    if (!_disposed) {
+      _quickRepliesGenerationStart = DateTime.now();
+      _quickReplies = []; // Clear previous replies
+      _safeNotifyListeners();
+    }
+    
+    try {
+      // Build conversation history for context
+      final conversationHistory = _messages
+          .where((m) => m.role != ChatRole.system && !m.isPending)
+          .map((m) => m.toOpenRouterMessage())
+          .toList();
+      
+      // Generate quick replies using the API
+      final generatedReplies = await _api.generateQuickReplies(
+        conversationHistory: conversationHistory,
+        count: 2,
+      );
+      
+      // Update quick replies if not disposed
+      if (!_disposed && generatedReplies.isNotEmpty) {
+        _quickReplies = generatedReplies;
+        _quickRepliesGenerationStart = null; // Clear timestamp when we have replies
+        _safeNotifyListeners();
+      } else if (!_disposed) {
+        // If generation failed, clear quick replies (will use fallback in UI)
+        _quickReplies = [];
+        _quickRepliesGenerationStart = null;
+        _safeNotifyListeners();
+      }
+    } catch (e) {
+      // If generation fails, clear quick replies (will use fallback in UI)
+      if (!_disposed) {
+        _quickReplies = [];
+        _quickRepliesGenerationStart = null;
+        _safeNotifyListeners();
+      }
+    }
+  }
+  
+  /// Check if we should wait for API suggestions or show defaults
+  /// Returns true if we should wait (generation started recently), false if we can show defaults
+  bool get shouldWaitForQuickReplies {
+    if (_quickReplies.isNotEmpty) return false; // Already have replies
+    if (_quickRepliesGenerationStart == null) return false; // Not generating
+    
+    // Wait up to 2.5 seconds for API to return
+    final elapsed = DateTime.now().difference(_quickRepliesGenerationStart!);
+    return elapsed.inMilliseconds < 2500;
+  }
+
   Future<void> resetConversation() async {
     if (_disposed) return;
     _isSending = false;
     _isStopped = false;
+    
+    // Clear quick replies when conversation is reset
+    if (!_disposed) {
+      _quickReplies = [];
+      _quickRepliesGenerationStart = null;
+    }
     
     // Delete all messages from database
     try {

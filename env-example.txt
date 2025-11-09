@@ -9,6 +9,8 @@ SUPABASE_ANON_KEY=
 OPENROUTER_MODEL=minimax/minimax-m2:free
 # Model used for onboarding and finding AI assistants (falls back to OPENROUTER_MODEL if not set)
 ONBOARDING_MODEL=
+# Model used for generating quick reply suggestions (falls back to OPENROUTER_MODEL if not set)
+QUICK_REPLY_MODEL=
 # Maximum tokens for AI responses (default: 800, suitable for mobile)
 # Lower values = shorter responses, higher values = longer responses
 OPENROUTER_MAX_TOKENS=800

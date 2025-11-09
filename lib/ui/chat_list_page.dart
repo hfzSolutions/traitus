@@ -6,6 +6,7 @@ import 'package:traitus/providers/chat_provider.dart';
 import 'package:traitus/providers/chats_list_provider.dart';
 import 'package:traitus/ui/chat_page.dart';
 import 'package:traitus/ui/notes_page.dart';
+import 'package:traitus/ui/settings_page.dart';
 import 'package:traitus/ui/widgets/chat_form_modal.dart';
 import 'package:traitus/ui/widgets/app_avatar.dart';
 import 'package:traitus/ui/widgets/haptic_modal.dart';
@@ -57,6 +58,18 @@ class ChatListPage extends StatelessWidget {
               );
             },
             tooltip: 'Saved Notes',
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const SettingsPage(isInTabView: false),
+                ),
+              );
+            },
+            tooltip: 'Settings',
           ),
         ],
       ),

@@ -174,6 +174,7 @@ class DatabaseService {
       'is_pending': message.isPending,
       'has_error': message.hasError,
       if (message.model != null) 'model': message.model,
+      if (message.imageUrls.isNotEmpty) 'image_urls': message.imageUrls,
     };
 
     final response = await _client
@@ -197,6 +198,7 @@ class DatabaseService {
           'is_pending': message.isPending,
           'has_error': message.hasError,
           if (message.model != null) 'model': message.model,
+          if (message.imageUrls.isNotEmpty) 'image_urls': message.imageUrls,
         })
         .eq('id', message.id)
         .eq('user_id', userId);
@@ -468,6 +470,17 @@ class DatabaseService {
   // ========== HELPERS ==========
 
   ChatMessage _chatMessageFromJson(Map<String, dynamic> json) {
+    // Parse image_urls - can be a list or null
+    List<String> imageUrls = [];
+    if (json['image_urls'] != null) {
+      if (json['image_urls'] is List) {
+        imageUrls = (json['image_urls'] as List)
+            .map((e) => e.toString())
+            .where((e) => e.isNotEmpty)
+            .toList();
+      }
+    }
+    
     return ChatMessage(
       id: json['id'] as String,
       role: ChatRole.values.firstWhere(
@@ -479,6 +492,7 @@ class DatabaseService {
       isPending: json['is_pending'] as bool? ?? false,
       hasError: json['has_error'] as bool? ?? false,
       model: json['model'] as String?,
+      imageUrls: imageUrls,
     );
   }
 }

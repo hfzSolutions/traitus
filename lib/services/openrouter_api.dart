@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:traitus/config/default_ai_config.dart';
 import 'package:http/http.dart' as http;
@@ -32,6 +33,17 @@ class OpenRouterApi {
   /// Falls back to the default OPENROUTER_MODEL if ONBOARDING_MODEL is not set.
   String get _onboardingModel {
     final value = dotenv.env['ONBOARDING_MODEL'];
+    if (value != null && value.isNotEmpty) {
+      return value;
+    }
+    // Fallback to default model
+    return _model;
+  }
+
+  /// Get the model for quick reply generation.
+  /// Falls back to the default OPENROUTER_MODEL if QUICK_REPLY_MODEL is not set.
+  String get _quickReplyModel {
+    final value = dotenv.env['QUICK_REPLY_MODEL'];
     if (value != null && value.isNotEmpty) {
       return value;
     }
@@ -78,7 +90,7 @@ class OpenRouterApi {
   }
 
   Future<String> createChatCompletion({
-    required List<Map<String, String>> messages,
+    required List<Map<String, dynamic>> messages,
     String? model,
     double? temperature,
     int? maxTokens,
@@ -124,7 +136,7 @@ class OpenRouterApi {
   /// Stream chat completion responses using Server-Sent Events (SSE).
   /// Yields content chunks as they arrive from the API.
   Stream<String> streamChatCompletion({
-    required List<Map<String, String>> messages,
+    required List<Map<String, dynamic>> messages,
     String? model,
     double? temperature,
     int? maxTokens,
@@ -185,7 +197,9 @@ class OpenRouterApi {
           try {
             final decoded = jsonDecode(data) as Map<String, dynamic>;
             final choices = decoded['choices'] as List<dynamic>?;
-            final delta = choices?.first?['delta'] as Map<String, dynamic>?;
+            if (choices == null || choices.isEmpty) continue;
+            
+            final delta = choices.first['delta'] as Map<String, dynamic>?;
             final content = delta?['content'] as String?;
             
             if (content != null && content.isNotEmpty) {
@@ -206,7 +220,9 @@ class OpenRouterApi {
         try {
           final decoded = jsonDecode(data) as Map<String, dynamic>;
           final choices = decoded['choices'] as List<dynamic>?;
-          final delta = choices?.first?['delta'] as Map<String, dynamic>?;
+          if (choices == null || choices.isEmpty) return;
+          
+          final delta = choices.first['delta'] as Map<String, dynamic>?;
           final content = delta?['content'] as String?;
           
           if (content != null && content.isNotEmpty) {
@@ -248,7 +264,7 @@ class OpenRouterApi {
     };
 
     final content = await createChatCompletion(
-      messages: [system.cast<String, String>(), user.cast<String, String>()],
+      messages: [system, user],
       model: _onboardingModel,
       temperature: 0.2,
     );
@@ -368,7 +384,7 @@ class OpenRouterApi {
     };
 
     final content = await createChatCompletion(
-      messages: [system.cast<String, String>(), user.cast<String, String>()],
+      messages: [system, user],
       model: _onboardingModel,
       temperature: 0.7,
     );
@@ -476,7 +492,7 @@ class OpenRouterApi {
 
     try {
       final content = await createChatCompletion(
-        messages: [system.cast<String, String>(), user.cast<String, String>()],
+        messages: [system, user],
         model: _onboardingModel,
         temperature: 0.7,
       );
@@ -538,6 +554,109 @@ class OpenRouterApi {
     }
 
     return null;
+  }
+
+  /// Generate contextually relevant quick reply suggestions based on the conversation.
+  /// Returns a list of 3 short reply suggestions (typically 1-5 words each).
+  /// Falls back to empty list if generation fails.
+  Future<List<String>> generateQuickReplies({
+    required List<Map<String, dynamic>> conversationHistory,
+    int count = 3,
+  }) async {
+    if (conversationHistory.isEmpty) {
+      return [];
+    }
+
+    // Get the last assistant message for context
+    String lastAssistantMessage = '';
+    for (final msg in conversationHistory.reversed) {
+      if (msg['role'] == 'assistant') {
+        lastAssistantMessage = msg['content'] ?? '';
+        break;
+      }
+    }
+
+    if (lastAssistantMessage.isEmpty) {
+      return [];
+    }
+
+    final system = {
+      'role': 'system',
+      'content':
+          'You are a helpful assistant that generates short, contextually relevant quick reply suggestions for a chat interface. '
+          'Based on the AI\'s last response, generate exactly $count short, natural reply suggestions that a user might want to send. '
+          'Each suggestion should be 1-5 words, conversational, and directly relevant to the AI\'s response. '
+          'Examples: "Thanks!", "Tell me more", "Can you explain?", "That makes sense", "I need help with this". '
+          'Return ONLY a JSON array of strings. No prose, no explanations. Just the array of $count reply suggestions.',
+    };
+
+    final user = {
+      'role': 'user',
+      'content':
+          'The AI just responded with: "${lastAssistantMessage.substring(0, lastAssistantMessage.length > 500 ? 500 : lastAssistantMessage.length)}"\n\n'
+          'Generate exactly $count short, contextually relevant quick reply suggestions that a user might want to send in response. '
+          'Return ONLY a JSON array of strings, e.g., ["Thanks!", "Tell me more", "Can you explain?"]',
+    };
+
+    try {
+      final content = await createChatCompletion(
+        messages: [system, user],
+        model: _quickReplyModel,
+        temperature: 0.7,
+        maxTokens: 100, // Short responses only
+      );
+
+      // Try to parse JSON array
+      try {
+        final decoded = jsonDecode(content);
+        if (decoded is List) {
+          final replies = decoded
+              .whereType<String>()
+              .map((s) => s.trim())
+              .where((s) => s.isNotEmpty && s.length <= 50) // Filter out empty or too long replies
+              .take(count)
+              .toList();
+          
+          if (replies.length >= 2) {
+            // Return at least 2 valid replies
+            return replies;
+          }
+        }
+      } catch (_) {
+        // If JSON parsing fails, try to extract suggestions from text
+        // Look for array-like patterns
+        final arrayMatch = RegExp(r'\[(.*?)\]', dotAll: true).firstMatch(content);
+        if (arrayMatch != null) {
+          final arrayContent = arrayMatch.group(1) ?? '';
+          final suggestions = arrayContent
+              .split(',')
+              .map((s) {
+                final trimmed = s.trim();
+                // Remove surrounding quotes (both single and double)
+                var result = trimmed;
+                if (result.startsWith('"') || result.startsWith("'")) {
+                  result = result.substring(1);
+                }
+                if (result.endsWith('"') || result.endsWith("'")) {
+                  result = result.substring(0, result.length - 1);
+                }
+                return result;
+              })
+              .where((s) => s.isNotEmpty && s.length <= 50)
+              .take(count)
+              .toList();
+          
+          if (suggestions.length >= 2) {
+            return suggestions;
+          }
+        }
+      }
+    } catch (e) {
+      // If generation fails, return empty list (caller will use fallback)
+      debugPrint('Error generating quick replies: $e');
+    }
+
+    return [];
   }
 }
 
