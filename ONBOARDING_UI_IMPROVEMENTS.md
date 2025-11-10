@@ -82,7 +82,7 @@ The onboarding UI has been completely redesigned with a modern, clean, and profe
 - List view with enhanced cards:
   - Large avatar containers (64x64)
   - Gradient backgrounds for selected items
-  - Model name in monospace font badge
+  - System prompt preview
   - Custom checkbox design
   - Two-line description with ellipsis
 - Selection counter with gradient
@@ -199,8 +199,7 @@ Labels: labelMedium/labelSmall
 ✓ Clear header structure
 ✓ List of detailed cards with:
   - Large avatar containers
-  - Three-line layout (title, desc, model)
-  - Model badge with monospace font
+  - Two-line layout (title, desc)
   - Custom checkbox design
 ✓ Gradient selection counter
 ✓ Sticky footer with primary CTA

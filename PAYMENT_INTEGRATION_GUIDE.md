@@ -8,28 +8,14 @@ This document describes the complete monetization system for Traitus AI, includi
 
 ### Plans
 
-- **Free Plan**: Access to Basic models only
-- **Pro Plan**: Access to all models (Basic + Premium)
+- **Free Plan**: Full access to all features
+- **Pro Plan**: Full access to all features (future premium features may be added)
 
 ### Database Schema
 
-#### `models` Table
-Stores available AI models from OpenRouter.
+#### Note: Models Table Removed
 
-```sql
-CREATE TABLE models (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  slug text NOT NULL UNIQUE,           -- OpenRouter model slug (e.g., 'openai/gpt-4o-mini')
-  display_name text NOT NULL,          -- User-facing name
-  tier text NOT NULL CHECK (tier IN ('basic','premium')),
-  enabled boolean NOT NULL DEFAULT true,
-  sort_order int NOT NULL DEFAULT 0,
-  input_max_tokens int,                -- Optional guardrails
-  output_max_tokens int,               -- Optional guardrails
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
-);
-```
+The `models` table has been removed. The app now uses a single model configured via `OPENROUTER_MODEL` environment variable.
 
 #### `user_entitlements` Table
 Tracks user subscription status.
@@ -55,17 +41,7 @@ CREATE TABLE user_entitlements (
    - Returns `UserPlan.free` or `UserPlan.pro`
    - Safe fallback to Free if DB unavailable
 
-2. **`ModelCatalogService`** (`lib/services/models_service.dart`)
-   - Fetches enabled models from Supabase
-   - Returns list with `id` (UUID), `slug` (OpenRouter), `tier`, `displayName`
-
-#### UI Components
-
-1. **Model Selector** (`lib/ui/widgets/chat_form_modal.dart`)
-   - Shows all models (Basic + Premium)
-   - Premium models show lock icon + "Pro" badge for Free users
-   - Tapping premium model opens upgrade page
-   - Prevents selection confusion (dropdown resets to basic model)
+**Note:** Model selection has been removed. The app now uses a single model from `OPENROUTER_MODEL` environment variable.
 
 2. **Upgrade Page** (`lib/ui/pro_upgrade_page.dart`)
    - Displays features and pricing
@@ -403,8 +379,7 @@ Log all IAP events:
 
 1. ✅ Database schema created
 2. ✅ UI components (upgrade page, settings) created
-3. ✅ Model gating implemented
-4. ⏳ Integrate `in_app_purchase` package
+3. ⏳ Integrate `in_app_purchase` package
 5. ⏳ Create IAP service
 6. ⏳ Implement server endpoints (validation + webhooks)
 7. ⏳ Test with sandbox accounts

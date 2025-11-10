@@ -141,7 +141,6 @@ ChatFormModal(
 ## 💡 Future Enhancements
 
 Possible additions to the reusable modal:
-- Model selection dropdown
 - Temperature/creativity sliders
 - Context window settings
 - Custom instructions field

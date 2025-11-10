@@ -6,7 +6,7 @@ Modern, cloud-powered AI chat application with user authentication and persisten
 
 - 🔐 **User Authentication** - Secure sign up, sign in, and password reset
 - ☁️ **Cloud Storage** - All data stored in Supabase (no local storage)
-- 💬 **AI Chat** - Multiple chat conversations with different AI models
+- 💬 **AI Chat** - Multiple chat conversations with customizable AI assistants
 - ⚡ **Streaming Responses** - Real-time word-by-word AI responses (like ChatGPT)
 - 🖼️ **Custom Avatars** - Personalize your AI chats with custom avatar images
 - 📝 **Notes** - Save and manage your notes
@@ -85,15 +85,15 @@ flutter run
 - **Multiple Chats**: Create different chat conversations with custom AI personalities
 - **Custom Avatars**: Upload custom images for your AI chat assistants (see [AVATAR_FEATURE.md](AVATAR_FEATURE.md))
 - **Notes**: Save important information from your chats or create standalone notes
-- **Settings**: Customize theme, manage your account, and configure AI models
+- **Settings**: Customize theme and manage your account
 - **Sign Out**: Securely sign out from the settings page
 
 ## 🗄️ Database Schema
 
 The app uses three main tables:
 
-- **`chats`** - Stores chat conversations (name, description, model, last message)
-- **`messages`** - Stores individual messages within chats (role, content, model, timestamps)
+- **`chats`** - Stores chat conversations (name, description, system prompt, last message)
+- **`messages`** - Stores individual messages within chats (role, content, model used, timestamps)
 - **`notes`** - Stores user notes (title, content, timestamps)
 
 All tables have Row Level Security (RLS) enabled, ensuring users can only access their own data.
@@ -144,30 +144,25 @@ lib/
 
 ## 🔧 Configuration
 
-### OpenRouter Models
+### OpenRouter Model Configuration
 
-You can use any model available on OpenRouter. Configure your preferred model in the `.env` file using the `OPENROUTER_MODEL` variable. Some popular options:
+The app uses a single AI model configured via the `OPENROUTER_MODEL` environment variable. This model is used for all AI interactions across all chats.
 
-- `anthropic/claude-3-opus` - Claude 3 Opus
-- `anthropic/claude-3-sonnet` - Claude 3 Sonnet
-- `openai/gpt-4-turbo` - GPT-4 Turbo
-- `google/gemini-pro` - Google Gemini Pro
+**Popular Model Options:**
+- `openrouter/auto` - Automatically selects the best available model (recommended)
+- `minimax/minimax-m2:free` - Fast and free
+- `anthropic/claude-3.5-sonnet` - Claude 3.5 Sonnet (premium)
+- `openai/gpt-4o-mini` - GPT-4 Omni Mini (premium)
 
-Example:
+**Example:**
 ```bash
-OPENROUTER_MODEL=anthropic/claude-3-sonnet
+OPENROUTER_MODEL=openrouter/auto
 ```
 
-The model specified in `.env` will be used for all new chats.
+**Model Tracking:**
+When using `openrouter/auto`, the app tracks which model was actually used for each message. This information is stored in the `model` field of each assistant message, allowing you to see which model generated each response.
 
-### Model Tracking
-
-Each assistant message now tracks which model was used to generate it. This allows you to:
-- Know exactly which model generated each response
-- Compare responses from different models over time
-- Debug model-specific issues
-
-See [MODEL_TRACKING.md](MODEL_TRACKING.md) for more details.
+For a full list of available models, visit: https://openrouter.ai/models
 
 ### Supabase Settings
 
@@ -202,8 +197,8 @@ flutter run
 
 - [Supabase Setup Guide](SUPABASE_SETUP.md) - Detailed Supabase configuration
 - [Avatar Feature Guide](AVATAR_FEATURE.md) - Custom AI avatar setup and usage
+- [App Icon Setup Guide](APP_ICON_SETUP.md) - How to add and update app icons for all platforms
 - [Database Schema](supabase_schema.sql) - SQL schema for Supabase
-- [Model Tracking](MODEL_TRACKING.md) - AI model tracking feature details
 - [Realtime Subscription & Unread Tracking](REALTIME_SUBSCRIPTION.md) - Real-time message updates and unread indicators
 - [Message Caching & UX Improvements](MESSAGE_CACHING_AND_UX.md) - Instant chat loading, message preloading, and standard chat behavior
 - [Streaming Response Feature](STREAMING_RESPONSE_FEATURE.md) - Real-time word-by-word AI responses with streaming

@@ -12,6 +12,7 @@ import 'package:traitus/ui/home_page.dart';
 import 'package:traitus/providers/chats_list_provider.dart';
 import 'package:traitus/ui/widgets/app_avatar.dart';
 import 'package:traitus/ui/widgets/haptic_modal.dart';
+import 'package:traitus/services/notification_service.dart';
 
 class OnboardingPage extends StatefulWidget {
   const OnboardingPage({super.key});
@@ -336,12 +337,22 @@ class _OnboardingPageState extends State<OnboardingPage>
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error picking image: $e'),
-          backgroundColor: Colors.red.shade600,
-        ),
-      );
+      final errorString = e.toString().toLowerCase();
+      if (errorString.contains('permission') || errorString.contains('denied')) {
+        // Show appropriate dialog based on source
+        if (source == ImageSource.camera) {
+          await NotificationService.showEnableCameraDialog(context);
+        } else {
+          await NotificationService.showEnablePhotoLibraryDialog(context);
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error picking image: $e'),
+            backgroundColor: Colors.red.shade600,
+          ),
+        );
+      }
     }
   }
 

@@ -8,7 +8,6 @@ import 'package:traitus/services/database_service.dart';
 import 'package:traitus/services/storage_service.dart';
 import 'package:traitus/services/supabase_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:traitus/services/models_service.dart';
 
 class ChatsListProvider extends ChangeNotifier {
   ChatsListProvider() {
@@ -51,17 +50,9 @@ class ChatsListProvider extends ChangeNotifier {
       
       // If no chats exist, create a default one
       if (_chats.isEmpty) {
-        String? model;
-        try {
-          final catalog = ModelCatalogService();
-          final models = await catalog.listEnabledModels();
-          final basic = models.firstWhere((m) => !m.isPremium, orElse: () => models.first);
-          model = basic.slug;
-        } catch (_) {
-          model = dotenv.env['OPENROUTER_MODEL'];
-          if (model == null || model.isEmpty) {
-            throw StateError('Missing OPENROUTER_MODEL. Add it to a .env file.');
-          }
+        final model = dotenv.env['OPENROUTER_MODEL'];
+        if (model == null || model.isEmpty) {
+          throw StateError('Missing OPENROUTER_MODEL. Add it to a .env file.');
         }
         final defaultChat = AiChat(
           name: 'AI Assistant',

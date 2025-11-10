@@ -289,7 +289,7 @@ Avoid force updates for:
 
 ```
 "Critical security update required. Please update to keep your data safe."
-"New features available! Update now to enjoy improved performance and new AI models."
+"New features available! Update now to enjoy improved performance and new features."
 "We've fixed several bugs that were affecting chat synchronization."
 ```
 

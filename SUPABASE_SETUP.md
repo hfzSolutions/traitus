@@ -133,7 +133,7 @@ The app will now:
 ### `chats` table
 - Stores chat conversation metadata
 - Each chat belongs to a user
-- Contains: id, user_id, name, description, model, last_message, last_message_time, created_at
+- Contains: id, user_id, name, description, system_prompt, last_message, last_message_time, created_at
 
 ### `messages` table
 - Stores individual messages within chats

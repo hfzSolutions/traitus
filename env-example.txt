@@ -1,22 +1,49 @@
-# OpenRouter API Key (for AI chat)
-OPENROUTER_API_KEY=
+# ========================================
+# REQUIRED: Supabase Configuration
+# ========================================
+SUPABASE_URL=your_supabase_url_here
+SUPABASE_ANON_KEY=your_supabase_anon_key_here
 
-# Supabase Configuration
-SUPABASE_URL=
-SUPABASE_ANON_KEY=
+# ========================================
+# REQUIRED: OpenRouter API Configuration
+# ========================================
+OPENROUTER_API_KEY=your_openrouter_api_key_here
 
-# Optional:
+# REQUIRED: AI Model - Used for all AI interactions
+# The app uses a single model for all chats (no per-chat model selection)
+# Popular options:
+#   - minimax/minimax-m2:free (free, fast)
+#   - google/gemini-2.0-flash-exp:free (free)
+#   - anthropic/claude-3.5-sonnet (premium)
+#   - openai/gpt-4o-mini (premium)
+# See https://openrouter.ai/models for full list
 OPENROUTER_MODEL=minimax/minimax-m2:free
-# Model used for onboarding and finding AI assistants (falls back to OPENROUTER_MODEL if not set)
-ONBOARDING_MODEL=
-# Model used for generating quick reply suggestions (falls back to OPENROUTER_MODEL if not set)
-QUICK_REPLY_MODEL=
+
+# ========================================
+# OPTIONAL: OpenRouter Advanced Settings
+# ========================================
 # Maximum tokens for AI responses (default: 800, suitable for mobile)
-# Lower values = shorter responses, higher values = longer responses
+# The system automatically adjusts based on user's response length preference:
+#   - Brief: ~50% of base (300-500 tokens)
+#   - Balanced: Base value (800 tokens default)
+#   - Detailed: ~150% of base (up to 1500 tokens)
 OPENROUTER_MAX_TOKENS=800
+
+# Optional: Override model for onboarding/assistant finding
+# Falls back to OPENROUTER_MODEL if not set
+# ONBOARDING_MODEL=
+
+# Optional: Override model for quick reply generation
+# Falls back to OPENROUTER_MODEL if not set
+# QUICK_REPLY_MODEL=
+
+# Optional: OpenRouter API settings
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_SITE_URL=https://your-site.example
 OPENROUTER_APP_NAME=Traitus AI Chat
 
+# ========================================
+# OPTIONAL: Push Notifications
+# ========================================
 # OneSignal Push Notifications
 ONESIGNAL_APP_ID=

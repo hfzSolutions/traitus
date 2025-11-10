@@ -29,14 +29,14 @@ The `streamChatCompletion()` method handles Server-Sent Events (SSE) from OpenRo
 
 #### Implementation:
 ```dart
-Stream<String> streamChatCompletion({
-  required List<Map<String, String>> messages,
-  String? model,
+Stream<Map<String, dynamic>> streamChatCompletion({
+  required List<Map<String, dynamic>> messages,
+  String? model, // Deprecated - always uses OPENROUTER_MODEL from env
   double? temperature,
 }) async* {
   // Enable streaming in request
   final requestBody = <String, dynamic>{
-    'model': model ?? _model,
+    'model': _model, // Always uses OPENROUTER_MODEL from env
     'messages': messages,
     'stream': true, // Key parameter
     if (temperature != null) 'temperature': temperature,
@@ -76,11 +76,15 @@ await for (final chunk in _api.streamChatCompletion(...)) {
   fullResponse += chunk;
   
   // Update message with accumulated content
+  // Extract content and model from chunk
+  final chunk = chunkData['content'] as String? ?? '';
+  final actualModel = chunkData['model'] as String?;
+  
   _messages[pendingIndex] = ChatMessage(
     role: ChatRole.assistant,
     content: fullResponse,
     isPending: true, // Still streaming
-    model: _model,
+    model: actualModel ?? _model, // Use actual model from API if available
   );
   
   // Trigger UI update
@@ -294,7 +298,7 @@ await for (final chunk in _api.streamChatCompletion(...)) {
 ## Troubleshooting
 
 ### Streaming Not Working
-- **Check API**: Verify OpenRouter supports streaming for your model
+- **Check API**: Verify OpenRouter supports streaming for your configured model
 - **Check Network**: Ensure stable connection for SSE
 - **Check Logs**: Look for chunk logs in console
 

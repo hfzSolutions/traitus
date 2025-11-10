@@ -125,7 +125,7 @@ class SettingsPage extends StatelessWidget {
               Icons.code,
               color: theme.colorScheme.primary,
             ),
-            title: const Text('Traitus AI Chat'),
+            title: const Text('Traitus'),
             subtitle: const Text('Powered by OpenRouter API'),
           ),
           const Divider(),

@@ -5,6 +5,7 @@ import 'package:traitus/providers/auth_provider.dart';
 import 'package:traitus/ui/settings_page.dart';
 import 'package:traitus/ui/widgets/app_avatar.dart';
 import 'package:traitus/services/storage_service.dart';
+import 'package:traitus/services/notification_service.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key, this.isInTabView = false});
@@ -71,12 +72,17 @@ class _ProfilePageState extends State<ProfilePage> {
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to pick image: $e'),
-            duration: const Duration(seconds: 3),
-          ),
-        );
+        final errorString = e.toString().toLowerCase();
+        if (errorString.contains('permission') || errorString.contains('denied')) {
+          await NotificationService.showEnablePhotoLibraryDialog(context);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to pick image: $e'),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
       }
     }
   }
@@ -107,7 +113,7 @@ class _ProfilePageState extends State<ProfilePage> {
       body: Consumer<AuthProvider>(
         builder: (context, authProvider, _) {
           final userProfile = authProvider.userProfile;
-          final displayName = userProfile?.displayName ?? 'Traitus AI User';
+          final displayName = userProfile?.displayName ?? 'Traitus User';
           
           return ListView(
             children: [

@@ -91,14 +91,14 @@ class OpenRouterApi {
 
   Future<String> createChatCompletion({
     required List<Map<String, dynamic>> messages,
-    String? model,
+    String? model, // Deprecated - always uses OPENROUTER_MODEL from env
     double? temperature,
     int? maxTokens,
   }) async {
     final uri = _endpointUri('/chat/completions');
 
     final requestBody = <String, dynamic>{
-      'model': model ?? _model,
+      'model': _model, // Always use OPENROUTER_MODEL from env
       'messages': messages,
       'max_tokens': maxTokens ?? _maxTokens,
       if (temperature != null) 'temperature': temperature,
@@ -108,7 +108,7 @@ class OpenRouterApi {
       'Authorization': 'Bearer $_apiKey',
       'Content-Type': 'application/json',
       'HTTP-Referer': dotenv.env['OPENROUTER_SITE_URL'] ?? 'https://example.com',
-      'X-Title': dotenv.env['OPENROUTER_APP_NAME'] ?? 'Traitus AI Chat',
+      'X-Title': dotenv.env['OPENROUTER_APP_NAME'] ?? 'Traitus',
     };
 
     final response = await _client.post(
@@ -135,16 +135,17 @@ class OpenRouterApi {
 
   /// Stream chat completion responses using Server-Sent Events (SSE).
   /// Yields content chunks as they arrive from the API.
-  Stream<String> streamChatCompletion({
+  /// Returns a Stream of Map with 'content' and optionally 'model' (when available).
+  Stream<Map<String, dynamic>> streamChatCompletion({
     required List<Map<String, dynamic>> messages,
-    String? model,
+    String? model, // Deprecated - always uses OPENROUTER_MODEL from env
     double? temperature,
     int? maxTokens,
   }) async* {
     final uri = _endpointUri('/chat/completions');
 
     final requestBody = <String, dynamic>{
-      'model': model ?? _model,
+      'model': _model, // Always use OPENROUTER_MODEL from env
       'messages': messages,
       'stream': true, // Enable streaming
       'max_tokens': maxTokens ?? _maxTokens,
@@ -155,7 +156,7 @@ class OpenRouterApi {
       'Authorization': 'Bearer $_apiKey',
       'Content-Type': 'application/json',
       'HTTP-Referer': dotenv.env['OPENROUTER_SITE_URL'] ?? 'https://example.com',
-      'X-Title': dotenv.env['OPENROUTER_APP_NAME'] ?? 'Traitus AI Chat',
+      'X-Title': dotenv.env['OPENROUTER_APP_NAME'] ?? 'Traitus',
     };
 
     final request = http.Request('POST', uri)
@@ -173,6 +174,8 @@ class OpenRouterApi {
     }
 
     String buffer = '';
+    String? actualModel; // Track the actual model used (important for openrouter/auto)
+    
     await for (final chunk in streamedResponse.stream.transform(utf8.decoder)) {
       buffer += chunk;
       
@@ -196,6 +199,12 @@ class OpenRouterApi {
 
           try {
             final decoded = jsonDecode(data) as Map<String, dynamic>;
+            
+            // Capture model from response (important for openrouter/auto)
+            if (actualModel == null && decoded['model'] != null) {
+              actualModel = decoded['model'] as String;
+            }
+            
             final choices = decoded['choices'] as List<dynamic>?;
             if (choices == null || choices.isEmpty) continue;
             
@@ -203,7 +212,10 @@ class OpenRouterApi {
             final content = delta?['content'] as String?;
             
             if (content != null && content.isNotEmpty) {
-              yield content;
+              yield {
+                'content': content,
+                if (actualModel != null) 'model': actualModel,
+              };
             }
           } catch (e) {
             // Ignore parsing errors for incomplete chunks
@@ -219,6 +231,12 @@ class OpenRouterApi {
       if (data != '[DONE]') {
         try {
           final decoded = jsonDecode(data) as Map<String, dynamic>;
+          
+          // Capture model from response if not already captured
+          if (actualModel == null && decoded['model'] != null) {
+            actualModel = decoded['model'] as String;
+          }
+          
           final choices = decoded['choices'] as List<dynamic>?;
           if (choices == null || choices.isEmpty) return;
           
@@ -226,7 +244,10 @@ class OpenRouterApi {
           final content = delta?['content'] as String?;
           
           if (content != null && content.isNotEmpty) {
-            yield content;
+            yield {
+              'content': content,
+              if (actualModel != null) 'model': actualModel,
+            };
           }
         } catch (_) {
           // Ignore parsing errors
@@ -425,8 +446,8 @@ class OpenRouterApi {
             bool looksExternal = externalAction.any((w) => lowerName.contains(w) || lowerDesc.contains(w));
             if (looksExternal) continue;
 
-            // Attach model based on preference using our defaults/env
-            final model = DefaultAIConfig.getModel(preference);
+            // Attach model - always uses OPENROUTER_MODEL from env
+            final model = DefaultAIConfig.getModel();
             results.add({
               'id': id,
               'name': name,
@@ -537,8 +558,8 @@ class OpenRouterApi {
         bool looksExternal = externalAction.any((w) => lowerName.contains(w) || lowerDesc.contains(w));
         if (looksExternal) return null;
 
-        // Attach model based on preference
-        final model = DefaultAIConfig.getModel(validPreference);
+        // Attach model - always uses OPENROUTER_MODEL from env
+        final model = DefaultAIConfig.getModel();
 
         return {
           'name': name,

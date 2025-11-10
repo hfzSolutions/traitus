@@ -2,26 +2,13 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 /// Configuration for default AI assistants
 class DefaultAIConfig {
-  /// Get the model for a specific AI assistant type
-  static String getModel(String assistantType) {
-    final envKey = 'DEFAULT_MODEL_${assistantType.toUpperCase()}';
-    return dotenv.get(envKey, fallback: _getFallbackModel(assistantType));
-  }
-
-  /// Get fallback model if env variable is not set
-  static String _getFallbackModel(String assistantType) {
-    switch (assistantType) {
-      case 'coding':
-      case 'creative':
-      case 'research':
-      case 'business':
-        return dotenv.get('DEFAULT_MODEL_FREE', fallback: 'minimax/minimax-m2:free');
-      case 'productivity':
-      case 'learning':
-        return dotenv.get('DEFAULT_MODEL_PREMIUM', fallback: 'minimax/minimax-m2:free');
-      default:
-        return dotenv.get('DEFAULT_MODEL', fallback: 'minimax/minimax-m2:free');
+  /// Get the model - always returns OPENROUTER_MODEL from environment
+  static String getModel([String? assistantType]) {
+    final value = dotenv.env['OPENROUTER_MODEL'];
+    if (value == null || value.isEmpty) {
+      throw StateError('Missing OPENROUTER_MODEL. Add it to a .env file.');
     }
+    return value;
   }
 
   /// Get all available AI chat configurations
@@ -32,7 +19,7 @@ class DefaultAIConfig {
         'name': 'Coding Assistant',
         'shortDescription': 'Your programming companion for solving coding problems',
         'systemPrompt': 'You are an expert coding assistant specialized in helping developers solve programming problems, debug code, and understand technical concepts. Provide clear, accurate, and well-structured code examples and explanations.',
-        'model': getModel('coding'),
+        'model': getModel(),
         'avatar': '💻',
         'preference': 'coding',
       },
@@ -41,7 +28,7 @@ class DefaultAIConfig {
         'name': 'Creative Writer',
         'shortDescription': 'Spark your creativity with story ideas and writing help',
         'systemPrompt': 'You are a creative writing assistant that helps users with storytelling, creative writing, and generating ideas. You provide engaging and imaginative content, help with character development, plot ideas, and writing techniques.',
-        'model': getModel('creative'),
+        'model': getModel(),
         'avatar': '✍️',
         'preference': 'creative',
       },
@@ -50,7 +37,7 @@ class DefaultAIConfig {
         'name': 'Research Assistant',
         'shortDescription': 'Deep dive into topics and gather information',
         'systemPrompt': 'You are a research assistant that helps users gather information, analyze topics, and provide comprehensive insights. You present information in a clear, organized, and well-sourced manner.',
-        'model': getModel('research'),
+        'model': getModel(),
         'avatar': '🔍',
         'preference': 'research',
       },
@@ -59,7 +46,7 @@ class DefaultAIConfig {
         'name': 'Productivity Coach',
         'shortDescription': 'Optimize your workflow and time management',
         'systemPrompt': 'You are a productivity coach that helps users improve their time management, workflow efficiency, and organizational skills. Provide actionable advice and strategies for better productivity.',
-        'model': getModel('productivity'),
+        'model': getModel(),
         'avatar': '📈',
         'preference': 'productivity',
       },
@@ -68,7 +55,7 @@ class DefaultAIConfig {
         'name': 'Learning Tutor',
         'shortDescription': 'Master new concepts with personalized explanations',
         'systemPrompt': 'You are a patient and knowledgeable tutor that helps users learn new concepts. Break down complex topics into understandable parts, provide examples, and adapt your teaching style to the user\'s level.',
-        'model': getModel('learning'),
+        'model': getModel(),
         'avatar': '🎓',
         'preference': 'learning',
       },
@@ -77,7 +64,7 @@ class DefaultAIConfig {
         'name': 'Business Advisor',
         'shortDescription': 'Strategic insights for your business decisions',
         'systemPrompt': 'You are a business advisor with expertise in strategy, analysis, and business development. Help users make informed decisions, analyze markets, and develop business strategies.',
-        'model': getModel('business'),
+        'model': getModel(),
         'avatar': '💼',
         'preference': 'business',
       },

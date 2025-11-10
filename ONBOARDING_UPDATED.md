@@ -43,7 +43,7 @@ The onboarding feature has been updated to give users **full control** over whic
 - Each chat shows:
   - Avatar emoji
   - Name and description
-  - AI model (e.g., `minimax/minimax-m2:free` or `minimax/minimax-m2:free`)
+  - System prompt (defines the AI's behavior and expertise)
   - Checkbox for selection
 - **Optional**: Can select none, some, or all
 - Counter shows how many assistants selected
@@ -97,10 +97,9 @@ The onboarding feature has been updated to give users **full control** over whic
 3. **`lib/providers/auth_provider.dart`**
    - Updated `completeOnboarding()` to accept and pass `selectedChatIds`
 
-### AI Models Used
+### AI Model Configuration
 
-- **Minimax M2 (Free)**: Used for coding, creative, research, and business
-- **GPT-4o**: Used for productivity and learning assistants
+All AI assistants use the model configured in the `OPENROUTER_MODEL` environment variable. The app uses a single model for all interactions, ensuring consistency across all chats.
 
 ### Data Flow
 

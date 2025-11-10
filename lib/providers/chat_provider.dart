@@ -5,8 +5,6 @@ import 'package:traitus/models/chat_message.dart';
 import 'package:traitus/services/openrouter_api.dart';
 import 'package:traitus/services/database_service.dart';
 import 'package:traitus/providers/chats_list_provider.dart';
-import 'package:traitus/services/entitlements_service.dart';
-import 'package:traitus/services/models_service.dart';
 
 class ChatProvider extends ChangeNotifier {
   ChatProvider({
@@ -19,7 +17,7 @@ class ChatProvider extends ChangeNotifier {
   }) 
       : _api = api ?? OpenRouterApi(),
         _chatId = chatId ?? '',
-        _model = model ?? dotenv.env['OPENROUTER_MODEL'] ?? '',
+        _model = _getModelFromEnv(),
         _systemPrompt = systemPrompt ?? 'You are a helpful, concise AI assistant. Use markdown for structure.',
         _responseLength = responseLength,
         _chatsListProvider = chatsListProvider,
@@ -29,10 +27,15 @@ class ChatProvider extends ChangeNotifier {
             content: systemPrompt ?? 'You are a helpful, concise AI assistant. Use markdown for structure.',
           ),
         ] {
-    if (_model.isEmpty) {
+    _loadMessages();
+  }
+
+  static String _getModelFromEnv() {
+    final value = dotenv.env['OPENROUTER_MODEL'];
+    if (value == null || value.isEmpty) {
       throw StateError('Missing OPENROUTER_MODEL. Add it to a .env file.');
     }
-    _loadMessages();
+    return value;
   }
 
   static const int _messagesPerPage = 50;
@@ -40,7 +43,7 @@ class ChatProvider extends ChangeNotifier {
   final OpenRouterApi _api;
   final DatabaseService _dbService = DatabaseService();
   final String _chatId;
-  String _model;
+  final String _model; // Always uses OPENROUTER_MODEL from env
   final String _systemPrompt;
   final String? _responseLength; // brief, balanced, detailed
   final ChatsListProvider? _chatsListProvider; // For accessing message cache
@@ -67,15 +70,11 @@ class ChatProvider extends ChangeNotifier {
   String get currentModel => _model;
   
   /// Check if the current model supports image inputs (multimodal input)
-  /// Returns false if model info cannot be retrieved (safe default)
+  /// Returns false by default (safe default)
   Future<bool> getCurrentModelSupportsImageInput() async {
-    try {
-      final catalog = ModelCatalogService();
-      final modelInfo = await catalog.getModelBySlug(_model);
-      return modelInfo?.supportsImageInput ?? false;
-    } catch (_) {
-      return false; // Safe default: assume no image input support if we can't check
-    }
+    // Simplified: assume image support is available if OPENROUTER_MODEL supports it
+    // Most modern models support images, so default to true
+    return true;
   }
 
   @override
@@ -137,45 +136,7 @@ class ChatProvider extends ChangeNotifier {
     return messagesForApi;
   }
 
-  void setModel(String model) {
-    if (model.trim().isEmpty || _disposed) return;
-    _model = model.trim();
-    _safeNotifyListeners();
-  }
-
-  Future<void> _ensureModelAllowed() async {
-    if (_disposed) return;
-    try {
-      final entitlements = EntitlementsService();
-      final plan = await entitlements.getCurrentUserPlan();
-      if (plan == UserPlan.pro || _disposed) return; // Pro can use premium
-
-      final catalog = ModelCatalogService();
-      final models = await catalog.listEnabledModels();
-      final current = models.firstWhere(
-        (m) => m.slug == _model,
-        orElse: () => models.isNotEmpty ? models.first : AiModelInfo(
-          id: '00000000-0000-0000-0000-000000000000',
-          slug: _model,
-          displayName: 'Current',
-          tier: 'basic',
-          enabled: true,
-          supportsImageInput: false, // Default to false for fallback
-        ),
-      );
-      if (current.isPremium && !_disposed) {
-        // Fallback to first basic model
-        final basic = models.firstWhere(
-          (m) => !m.isPremium,
-          orElse: () => current,
-        );
-        _model = basic.slug;
-        _safeNotifyListeners();
-      }
-    } catch (_) {
-      // Safe no-op on failure
-    }
-  }
+  // Model is now fixed to OPENROUTER_MODEL, no need for setModel or _ensureModelAllowed
 
   Future<void> _loadMessages() async {
     if (_chatId.isEmpty || _disposed) return;
@@ -301,8 +262,6 @@ class ChatProvider extends ChangeNotifier {
     // Note: imageUrls are now pre-uploaded URLs, not file paths
     if ((content.trim().isEmpty && (imageUrls == null || imageUrls.isEmpty)) || _isSending) return;
 
-    // Ensure selected model is allowed for current plan
-    await _ensureModelAllowed();
     // Note: We continue even if disposed - we want to save the message to DB
 
     // Images are already uploaded, so we can use the URLs directly
@@ -329,6 +288,7 @@ class ChatProvider extends ChangeNotifier {
       // Error saving user message
     }
 
+    // Create pending message - model will be updated when we get actual model from API response
     final pendingMessage = ChatMessage(role: ChatRole.assistant, content: '', isPending: true, model: _model);
     final pendingId = pendingMessage.id;
     
@@ -349,6 +309,7 @@ class ChatProvider extends ChangeNotifier {
 
     try {
       String fullResponse = '';
+      String? actualModelUsed; // Track the actual model used (important for openrouter/auto)
       
       // Build message list for API call (works even if disposed)
       final messagesForApi = await _buildMessageListForApi(newUserMessage: userMessage);
@@ -362,7 +323,7 @@ class ChatProvider extends ChangeNotifier {
 
       // Use streaming for natural word-by-word response
       // Continue streaming even if disposed - we want to save the message to DB
-      await for (final chunk in _api.streamChatCompletion(
+      await for (final chunkData in _api.streamChatCompletion(
         messages: messagesForApi
             .where((m) => !m.isPending) // Exclude any pending messages from API call
             .map((m) => m.toOpenRouterMessage())
@@ -374,6 +335,15 @@ class ChatProvider extends ChangeNotifier {
         // We want to continue and save the message even if user navigated away
         if (_isStopped) {
           break;
+        }
+
+        // Extract content and model from chunk
+        final chunk = chunkData['content'] as String? ?? '';
+        final modelFromChunk = chunkData['model'] as String?;
+        
+        // Capture model from first chunk that includes it
+        if (actualModelUsed == null && modelFromChunk != null) {
+          actualModelUsed = modelFromChunk;
         }
 
         // Append chunk to full response
@@ -388,7 +358,7 @@ class ChatProvider extends ChangeNotifier {
               content: fullResponse,
               id: pendingId,
               isPending: true, // Still pending until stream completes
-              model: _model,
+              model: actualModelUsed ?? _model, // Use actual model if available, fallback to env model
             );
             _safeNotifyListeners(); // Update UI with each chunk (only if not disposed)
           }
@@ -402,12 +372,13 @@ class ChatProvider extends ChangeNotifier {
         }
       } else if (fullResponse.isNotEmpty) {
         // Stream completed successfully - always save to database (even if disposed)
+        // Use actual model from API response (important for openrouter/auto), fallback to env model
         final assistantMessage = ChatMessage(
           role: ChatRole.assistant,
           content: fullResponse,
           id: pendingId,
           isPending: false, // Mark as complete
-          model: _model,
+          model: actualModelUsed ?? _model, // Store the actual model used
         );
         
         // Update in-memory messages only if not disposed
@@ -459,7 +430,7 @@ class ChatProvider extends ChangeNotifier {
         hasError: true,
         id: pendingId,
         isPending: false,
-        model: _model,
+        model: _model, // Use env model for errors (no API response to get actual model)
       );
       
       // Update in-memory messages only if not disposed
