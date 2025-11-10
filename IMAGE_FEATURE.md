@@ -33,16 +33,9 @@ Run these migration SQL files in your Supabase SQL Editor:
 -- File: supabase_migration_add_image_urls_to_messages.sql
 ```
 
-**2. Add supports_images to models table:**
-```sql
--- File: supabase_migration_add_supports_images_to_models.sql
-```
-
 This will:
 - Add `image_urls` column (TEXT[]) to the `messages` table
 - Create an index for efficient queries on messages with images
-- Add `supports_image_input` column (BOOLEAN) to the `models` table
-- Enable conditional UI display based on model capabilities
 - Note: This is for image input (multimodal), not image generation
 
 ### Step 2: Create Supabase Storage Bucket
@@ -104,28 +97,17 @@ USING (
 1. Create these policies under **"OTHER POLICIES UNDER STORAGE.OBJECTS"**, NOT under the bucket-level policies!
 2. **Policy 2 is critical** - it allows OpenRouter (and other external services) to download images without authentication. Without this, you'll get timeout errors.
 
-### Step 4: Configure Model Image Input Support
+### Step 4: Verify Model Support
 
-After running the migration, update your models table to mark which models support image inputs (multimodal):
+**Note:** The image upload button is always visible. The app will attempt to send images with your configured model. If the model doesn't support image inputs, OpenRouter will return an error, and the app will handle it gracefully.
 
-```sql
--- Mark multimodal models as supporting image inputs
-UPDATE models SET supports_image_input = true WHERE slug IN (
-  'anthropic/claude-3-opus',
-  'anthropic/claude-3-sonnet',
-  'anthropic/claude-3-haiku',
-  'openai/gpt-4-vision-preview',
-  'openai/gpt-4o',
-  'openai/gpt-4o-mini',
-  'google/gemini-pro-vision',
-  'google/gemini-1.5-pro',
-  'google/gemini-1.5-flash'
-);
-```
+Most modern models support multimodal input. Check [OpenRouter's multimodal documentation](https://openrouter.ai/docs/features/multimodal/images) for the latest list of supported models.
 
-**Note:** The image upload button is always visible. If a user tries to upload an image with a model that doesn't support image inputs (`supports_image_input = false`), they'll see a helpful toast message suggesting they switch to a multimodal model. This field specifically indicates multimodal input capability, not image generation.
-
-Check [OpenRouter's multimodal documentation](https://openrouter.ai/docs/features/multimodal/images) for the latest list of supported models.
+**Recommended models for image input:**
+- `openrouter/auto` - Automatically selects a model that supports images
+- `anthropic/claude-3.5-sonnet` - Supports images
+- `openai/gpt-4o-mini` - Supports images
+- `google/gemini-2.0-flash-exp:free` - Supports images
 
 ## Implementation Details
 
@@ -155,16 +137,6 @@ Check [OpenRouter's multimodal documentation](https://openrouter.ai/docs/feature
    - Added image picker button to input bar (always visible)
    - Updated `_UserBubble` to display images
    - Added image selection callback
-   - Validates model support and shows toast if unsupported
-
-7. **`lib/services/models_service.dart`**
-   - Added `supportsImageInput` field to `AiModelInfo`
-   - Added `getModelBySlug()` method to fetch model info
-   - Updated queries to include `supports_image_input` field
-
-8. **`lib/providers/chat_provider.dart`**
-   - Added `getCurrentModelSupportsImageInput()` method
-   - Checks model capabilities before allowing image uploads
 
 ### Message Format
 

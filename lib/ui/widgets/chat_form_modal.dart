@@ -5,9 +5,7 @@ import 'package:traitus/models/ai_chat.dart';
 import 'package:traitus/ui/widgets/app_avatar.dart';
 import 'package:traitus/services/storage_service.dart';
 import 'package:traitus/services/openrouter_api.dart';
-import 'package:traitus/services/models_service.dart';
-import 'package:traitus/services/entitlements_service.dart';
-import 'package:traitus/ui/pro_upgrade_page.dart';
+import 'package:traitus/services/notification_service.dart';
 
 /// Reusable modal for creating or editing AI chats
 /// 
@@ -64,10 +62,6 @@ class _ChatFormModalState extends State<ChatFormModal> {
   bool _useQuickCreate = false; // Only for creating new chats
   bool _isGenerating = false;
   bool _hasGeneratedConfig = false; // Track if we've generated config from quick create
-  String? _selectedModelSlug;
-  List<AiModelInfo> _models = const [];
-  UserPlan _plan = UserPlan.free;
-  Key _dropdownKey = UniqueKey(); // Key to force dropdown rebuild when premium is selected
   
   // Response style preferences
   late String _selectedTone;
@@ -93,7 +87,6 @@ class _ChatFormModalState extends State<ChatFormModal> {
     
     // Quick create is only available when creating new chats
     _useQuickCreate = widget.isCreating && chat == null;
-    _initModels();
   }
 
   @override
@@ -105,40 +98,7 @@ class _ChatFormModalState extends State<ChatFormModal> {
     super.dispose();
   }
 
-  Future<void> _initModels() async {
-    try {
-      final catalog = ModelCatalogService();
-      final ent = EntitlementsService();
-      final results = await Future.wait([
-        catalog.listEnabledModels(),
-        ent.getCurrentUserPlan(),
-      ]);
-      _models = (results[0] as List<AiModelInfo>);
-      _plan = results[1] as UserPlan;
-
-      // Determine initial model: existing chat.model or first basic
-      final existing = widget.chat?.model;
-      if (existing != null && existing.isNotEmpty) {
-        _selectedModelSlug = existing;
-      } else {
-        final basic = _models.firstWhere(
-          (m) => !m.isPremium,
-          orElse: () => _models.isNotEmpty ? _models.first : AiModelInfo(
-            id: '00000000-0000-0000-0000-000000000000',
-            slug: 'openrouter:env-default',
-            displayName: 'Basic Model',
-            tier: 'basic',
-          enabled: true,
-          supportsImageInput: false, // Default to false for fallback
-        ),
-        );
-        _selectedModelSlug = basic.slug;
-      }
-    } catch (_) {
-      // leave defaults; _selectedModelSlug stays null
-    }
-    if (mounted) setState(() {});
-  }
+  // Model selection removed - app now uses OPENROUTER_MODEL from env only
 
   Future<void> _generateFromDescription() async {
     final description = _quickDescriptionController.text.trim();
@@ -225,12 +185,17 @@ class _ChatFormModalState extends State<ChatFormModal> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to pick image: $e'),
-            duration: const Duration(seconds: 3),
-          ),
-        );
+        final errorString = e.toString().toLowerCase();
+        if (errorString.contains('permission') || errorString.contains('denied')) {
+          await NotificationService.showEnablePhotoLibraryDialog(context);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to pick image: $e'),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
       }
     }
   }
@@ -289,7 +254,7 @@ class _ChatFormModalState extends State<ChatFormModal> {
         name: _nameController.text.trim(),
         shortDescription: _shortDescriptionController.text.trim(),
         systemPrompt: _systemPromptController.text.trim(),
-        model: (_selectedModelSlug ?? widget.chat?.model ?? ''),
+        model: '', // Model always uses OPENROUTER_MODEL from env, not stored in chat
         avatarUrl: avatarUrl,
         responseTone: _selectedTone,
         responseLength: _selectedLength,
@@ -687,135 +652,7 @@ class _ChatFormModalState extends State<ChatFormModal> {
                       if (_showAdvancedSettings) ...[
                         const SizedBox(height: 16),
                         
-                        // Model selector (DB-driven) - shows all models, disables premium for Free
-                        if (_models.isEmpty)
-                          const SizedBox.shrink()
-                        else ...[
-                          Builder(builder: (context) {
-                            // Determine allowed models (for value validation)
-                            final allowed = _plan == UserPlan.pro
-                                ? _models
-                                : _models.where((m) => !m.isPremium).toList();
-                            
-                            if (allowed.isEmpty) {
-                              return const SizedBox.shrink();
-                            }
-                            
-                            // Ensure selected value exists in allowed list to avoid assertion errors
-                            final allowedSlugs = allowed.map((m) => m.slug).toSet();
-                            final currentValue = (_selectedModelSlug != null && allowedSlugs.contains(_selectedModelSlug))
-                                ? _selectedModelSlug!
-                                : allowed.first.slug;
-
-                            // Build items list - show all models with visual indicators
-                            // Premium items are enabled but will open upgrade page when selected by Free users
-                            final dropdownItems = <DropdownMenuItem<String>>[];
-                            for (final m in _models) {
-                              final isPremium = m.isPremium;
-                              final isLockedForUser = isPremium && _plan == UserPlan.free;
-                              dropdownItems.add(
-                                DropdownMenuItem<String>(
-                                  value: m.slug,
-                                  enabled: true, // Always enabled so users can tap it
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      if (isLockedForUser) ...[
-                                        Icon(
-                                          Icons.lock_outline,
-                                          size: 16,
-                                          color: theme.colorScheme.primary,
-                                        ),
-                                        const SizedBox(width: 8),
-                                      ],
-                                      Flexible(
-                                        child: Text(
-                                          m.displayName,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            color: isLockedForUser
-                                                ? theme.colorScheme.primary
-                                                : theme.colorScheme.onSurface,
-                                            fontWeight: isLockedForUser ? FontWeight.w600 : FontWeight.normal,
-                                          ),
-                                        ),
-                                      ),
-                                      if (isPremium && !isLockedForUser) ...[
-                                        const SizedBox(width: 8),
-                                        Icon(
-                                          Icons.workspace_premium,
-                                          size: 16,
-                                          color: theme.colorScheme.primary,
-                                        ),
-                                      ],
-                                      if (isLockedForUser) ...[
-                                        const SizedBox(width: 8),
-                                        Text(
-                                          'Pro',
-                                          style: theme.textTheme.bodySmall?.copyWith(
-                                            color: theme.colorScheme.primary,
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                ),
-                              );
-                            }
-
-                            return DropdownButtonFormField<String>(
-                              key: _dropdownKey,
-                              value: currentValue,
-                              decoration: const InputDecoration(
-                                labelText: 'Model',
-                                border: OutlineInputBorder(),
-                              ),
-                              items: dropdownItems,
-                              onChanged: (v) {
-                                if (v == null) return;
-                                try {
-                                  final selectedModel = _models.firstWhere(
-                                    (m) => m.slug == v,
-                                    orElse: () => _models.first,
-                                  );
-                                  // If Free user selects premium model, prevent selection and open upgrade page
-                                  if (selectedModel.isPremium && _plan == UserPlan.free) {
-                                    // Force dropdown to rebuild with original value by changing key
-                                    setState(() {
-                                      _dropdownKey = UniqueKey();
-                                    });
-                                    // Small delay to let dropdown close smoothly
-                                    Future.delayed(const Duration(milliseconds: 300), () {
-                                      if (context.mounted) {
-                                        Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (context) => const ProUpgradePage(),
-                                          ),
-                                        );
-                                      }
-                                    });
-                                    return;
-                                  }
-                                  setState(() {
-                                    _selectedModelSlug = v;
-                                  });
-                                } catch (e) {
-                                  // Silently handle errors
-                                }
-                              },
-                              validator: (v) {
-                                if ((v == null || v.trim().isEmpty) && widget.isCreating) {
-                                  return 'Please select a model';
-                                }
-                                return null;
-                              },
-                            );
-                          }),
-                        ],
-                        const SizedBox(height: 16),
+                        // Model selector removed - app now uses OPENROUTER_MODEL from env only
                         
                         // Response Tone
                         DropdownButtonFormField<String>(

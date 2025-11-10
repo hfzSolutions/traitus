@@ -98,14 +98,16 @@ Added to `user_profiles` table:
 
 Based on user preferences, the following AI assistants are recommended for selection:
 
-| Preference | Chat Name | Model | Description |
-|-----------|-----------|-------|-------------|
-| coding | Coding Assistant | claude-3.5-sonnet | Programming companion for solving coding problems |
-| creative | Creative Writer | claude-3.5-sonnet | Spark creativity with story ideas and writing help |
-| research | Research Assistant | claude-3.5-sonnet | Deep dive into topics and gather information |
-| productivity | Productivity Coach | gpt-4o | Optimize workflow and time management |
-| learning | Learning Tutor | gpt-4o | Master new concepts with personalized explanations |
-| business | Business Advisor | claude-3.5-sonnet | Strategic insights for business decisions |
+| Preference | Chat Name | Description |
+|-----------|-----------|-------------|
+| coding | Coding Assistant | Programming companion for solving coding problems |
+| creative | Creative Writer | Spark creativity with story ideas and writing help |
+| research | Research Assistant | Deep dive into topics and gather information |
+| productivity | Productivity Coach | Optimize workflow and time management |
+| learning | Learning Tutor | Master new concepts with personalized explanations |
+| business | Business Advisor | Strategic insights for business decisions |
+
+**Note:** All AI assistants use the model configured in `OPENROUTER_MODEL` environment variable.
 
 **Note**: Users are shown only the AI assistants that match their selected preferences, and can choose which ones to add (or none at all).
 
@@ -182,7 +184,6 @@ Potential improvements for future versions:
 - Allow customization of chat names during selection
 - Add more preference categories and AI assistants
 - Add "Select All" / "Deselect All" buttons
-- Allow model selection for each AI assistant
 - Save progress if user exits mid-onboarding
 - Add tutorial/help tooltips
 - Analytics tracking for preference and chat selections

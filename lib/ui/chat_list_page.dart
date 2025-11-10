@@ -10,7 +10,6 @@ import 'package:traitus/ui/settings_page.dart';
 import 'package:traitus/ui/widgets/chat_form_modal.dart';
 import 'package:traitus/ui/widgets/app_avatar.dart';
 import 'package:traitus/ui/widgets/haptic_modal.dart';
-// import 'package:traitus/services/models_service.dart';
 
 class ChatListPage extends StatelessWidget {
   const ChatListPage({super.key, this.isInTabView = false});
@@ -44,7 +43,7 @@ class ChatListPage extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Traitus AI'),
+        title: const Text('Traitus'),
         automaticallyImplyLeading: !isInTabView,
         actions: [
           IconButton(
@@ -95,10 +94,14 @@ class ChatListPage extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         const SizedBox(height: 120),
-                        Icon(
-                          Icons.chat_bubble_outline,
-                          size: 64,
-                          color: theme.colorScheme.primary.withOpacity(0.5),
+                        Opacity(
+                          opacity: 0.5,
+                          child: Image.asset(
+                            'assets/logo.png',
+                            width: 64,
+                            height: 64,
+                            fit: BoxFit.contain,
+                          ),
                         ),
                         const SizedBox(height: 24),
                         Text(

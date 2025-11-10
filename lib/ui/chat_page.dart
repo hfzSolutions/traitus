@@ -17,10 +17,8 @@ import 'package:traitus/providers/chats_list_provider.dart';
 import 'package:traitus/ui/widgets/chat_form_modal.dart';
 import 'package:traitus/ui/widgets/app_avatar.dart';
 import 'package:traitus/ui/widgets/haptic_modal.dart';
-import 'package:traitus/services/models_service.dart';
-import 'package:traitus/services/entitlements_service.dart';
+import 'package:traitus/services/notification_service.dart';
 import 'package:traitus/services/storage_service.dart';
-import 'package:traitus/ui/pro_upgrade_page.dart';
 
 const _uuid = Uuid();
 
@@ -384,7 +382,6 @@ class _ChatPageState extends State<ChatPage> {
 
   void _showEditChatDialog(BuildContext context) {
     final chatsListProvider = context.read<ChatsListProvider>();
-    final chatProvider = context.read<ChatProvider>();
     final chat = chatsListProvider.getChatById(widget.chatId);
     
     if (chat == null) return;
@@ -420,10 +417,7 @@ class _ChatPageState extends State<ChatPage> {
           
           await chatsListProvider.updateChat(updatedChat);
           
-          // Also update the ChatProvider's model if it changed
-          if (model.isNotEmpty && model != chat.model) {
-            chatProvider.setModel(model);
-          }
+          // Model is now always OPENROUTER_MODEL from env, no need to update ChatProvider
           
           if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -517,86 +511,7 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  Future<void> _showModelPicker(BuildContext context) async {
-    final chatsListProvider = context.read<ChatsListProvider>();
-    final chat = chatsListProvider.getChatById(widget.chatId);
-    
-    if (chat == null) return;
-    
-    final catalog = ModelCatalogService();
-    final ent = EntitlementsService();
-    
-    try {
-      final results = await Future.wait([
-        catalog.listEnabledModels(),
-        ent.getCurrentUserPlan(),
-      ]);
-      
-      final models = results[0] as List<AiModelInfo>;
-      final plan = results[1] as UserPlan;
-      
-      if (models.isEmpty || !context.mounted) return;
-      
-      // Determine allowed models
-      final allowed = plan == UserPlan.pro
-          ? models
-          : models.where((m) => !m.isPremium).toList();
-      
-      if (allowed.isEmpty) return;
-      
-      // Find current model
-      final currentModelSlug = chat.model;
-      final currentModel = models.firstWhere(
-        (m) => m.slug == currentModelSlug,
-        orElse: () => allowed.first,
-      );
-      
-      if (!context.mounted) return;
-      
-      // Store parent context and ChatProvider for use after modal closes
-      final parentContext = context;
-      final chatProvider = context.read<ChatProvider>();
-      
-      final selectedModel = await HapticModal.showModalBottomSheet<AiModelInfo>(
-        context: context,
-        builder: (context) => _ModelPickerBottomSheet(
-          models: models,
-          currentModel: currentModel,
-          plan: plan,
-          allowedModels: allowed,
-          parentContext: parentContext,
-        ),
-      );
-      
-      if (selectedModel != null && parentContext.mounted) {
-        // Update chat model in database
-        final updatedChat = chat.copyWith(model: selectedModel.slug);
-        await chatsListProvider.updateChat(updatedChat);
-        
-        // Also update the ChatProvider's model so new messages use the new model
-        chatProvider.setModel(selectedModel.slug);
-        
-        if (parentContext.mounted) {
-          ScaffoldMessenger.of(parentContext).showSnackBar(
-            SnackBar(
-              content: Text('Model changed to ${selectedModel.displayName}'),
-              duration: const Duration(seconds: 2),
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      debugPrint('Error showing model picker: $e');
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to load models'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
-    }
-  }
+  // Model picker removed - app now uses OPENROUTER_MODEL from env only
 
   void _sendQuickReply(String text) {
     _controller.text = text;
@@ -849,7 +764,6 @@ class _ChatPageState extends State<ChatPage> {
               onStop: () {
                 context.read<ChatProvider>().stopGeneration();
               },
-              onModelPicker: () => _showModelPicker(context),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
@@ -897,10 +811,14 @@ class _EmptyState extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                Icons.chat_bubble_outline,
-                size: 64,
-                color: theme.colorScheme.primary.withOpacity(0.5),
+              Opacity(
+                opacity: 0.5,
+                child: Image.asset(
+                  'assets/logo.png',
+                  width: 64,
+                  height: 64,
+                  fit: BoxFit.contain,
+                ),
               ),
               const SizedBox(height: 24),
               Text(
@@ -1649,13 +1567,11 @@ class _InputBar extends StatefulWidget {
     required this.controller,
     required this.onSend,
     required this.onStop,
-    required this.onModelPicker,
   });
 
   final TextEditingController controller;
   final void Function(List<String>?) onSend; // Now accepts optional image paths
   final VoidCallback onStop;
-  final VoidCallback onModelPicker;
 
   @override
   State<_InputBar> createState() => _InputBarState();
@@ -1947,18 +1863,22 @@ class _InputBarState extends State<_InputBar> {
     } catch (e) {
       debugPrint('Error picking image: $e');
       if (mounted) {
-        String errorMessage = 'Failed to pick image';
-        if (e.toString().contains('permission')) {
-          errorMessage = 'Camera permission denied. Please enable camera access in settings.';
+        final errorString = e.toString().toLowerCase();
+        if (errorString.contains('permission') || errorString.contains('denied')) {
+          // Show appropriate dialog based on source
+          if (source == ImageSource.camera) {
+            await NotificationService.showEnableCameraDialog(context);
+          } else {
+            await NotificationService.showEnablePhotoLibraryDialog(context);
+          }
         } else {
-          errorMessage = 'Failed to pick image: ${e.toString()}';
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to pick image: ${e.toString()}'),
+              duration: const Duration(seconds: 3),
+            ),
+          );
         }
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(errorMessage),
-            duration: const Duration(seconds: 3),
-          ),
-        );
       }
     }
   }
@@ -1979,15 +1899,6 @@ class _InputBarState extends State<_InputBar> {
                 onTap: () {
                   Navigator.pop(sheetContext);
                   _showImageSourcePicker();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.tune),
-                title: const Text('Change Model'),
-                subtitle: const Text('Select AI model for this chat'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  widget.onModelPicker();
                 },
               ),
             ],
@@ -2021,38 +1932,59 @@ class _InputBarState extends State<_InputBar> {
         _partialText = '';
       });
       
-      await _speech.listen(
-        onResult: (result) {
-          // Don't update if we're no longer listening (e.g., message was sent)
-          if (!_isListening) return;
-          
+      try {
+        await _speech.listen(
+          onResult: (result) {
+            // Don't update if we're no longer listening (e.g., message was sent)
+            if (!_isListening) return;
+            
+            setState(() {
+              _isUpdatingFromSpeech = true;
+              if (result.finalResult) {
+                // Final result: append to base text
+                final newText = _baseText.isEmpty
+                    ? result.recognizedWords
+                    : '$_baseText ${result.recognizedWords}';
+                widget.controller.text = newText;
+                _baseText = newText;
+                _partialText = '';
+              } else {
+                // Partial result: show base text + partial text
+                _partialText = result.recognizedWords;
+                final displayText = _baseText.isEmpty
+                    ? _partialText
+                    : '$_baseText $_partialText';
+                widget.controller.text = displayText;
+              }
+              _isUpdatingFromSpeech = false;
+            });
+          },
+          listenFor: const Duration(seconds: 30),
+          pauseFor: const Duration(seconds: 3),
+          localeId: 'en_US',
+          cancelOnError: true,
+          partialResults: true,
+        );
+      } catch (e) {
+        debugPrint('Error starting speech recognition: $e');
+        if (mounted) {
           setState(() {
-            _isUpdatingFromSpeech = true;
-            if (result.finalResult) {
-              // Final result: append to base text
-              final newText = _baseText.isEmpty
-                  ? result.recognizedWords
-                  : '$_baseText ${result.recognizedWords}';
-              widget.controller.text = newText;
-              _baseText = newText;
-              _partialText = '';
-            } else {
-              // Partial result: show base text + partial text
-              _partialText = result.recognizedWords;
-              final displayText = _baseText.isEmpty
-                  ? _partialText
-                  : '$_baseText $_partialText';
-              widget.controller.text = displayText;
-            }
-            _isUpdatingFromSpeech = false;
+            _isListening = false;
+            _partialText = '';
           });
-        },
-        listenFor: const Duration(seconds: 30),
-        pauseFor: const Duration(seconds: 3),
-        localeId: 'en_US',
-        cancelOnError: true,
-        partialResults: true,
-      );
+          final errorString = e.toString().toLowerCase();
+          if (errorString.contains('permission') || errorString.contains('denied') || errorString.contains('microphone')) {
+            await NotificationService.showEnableMicrophoneDialog(context);
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Failed to start voice input: ${e.toString()}'),
+                duration: const Duration(seconds: 3),
+              ),
+            );
+          }
+        }
+      }
     }
   }
 
@@ -2741,155 +2673,5 @@ class _SaveNoteBottomSheetState extends State<_SaveNoteBottomSheet> {
   }
 }
 
-class _ModelPickerBottomSheet extends StatelessWidget {
-  const _ModelPickerBottomSheet({
-    required this.models,
-    required this.currentModel,
-    required this.plan,
-    required this.allowedModels,
-    required this.parentContext,
-  });
-
-  final List<AiModelInfo> models;
-  final AiModelInfo currentModel;
-  final UserPlan plan;
-  final List<AiModelInfo> allowedModels;
-  final BuildContext parentContext;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final mediaQuery = MediaQuery.of(context);
-    final maxHeight = mediaQuery.size.height * 0.7;
-
-    return Padding(
-      padding: EdgeInsets.only(
-        bottom: mediaQuery.viewInsets.bottom,
-      ),
-      child: SafeArea(
-        top: false,
-        child: Container(
-          constraints: BoxConstraints(maxHeight: maxHeight),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Handle bar
-              Container(
-                margin: const EdgeInsets.only(top: 12),
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.onSurfaceVariant.withOpacity(0.4),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              // Title
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.smart_toy,
-                      color: theme.colorScheme.primary,
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      'Select Model',
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(height: 1),
-              // Model list
-              Flexible(
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  itemCount: models.length,
-                  itemBuilder: (context, index) {
-                    final model = models[index];
-                    final isPremium = model.isPremium;
-                    final isLockedForUser = isPremium && plan == UserPlan.free;
-                    final isSelected = model.slug == currentModel.slug;
-
-                    return ListTile(
-                      leading: Icon(
-                        isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-                        color: isSelected
-                            ? theme.colorScheme.primary
-                            : theme.colorScheme.onSurface.withOpacity(0.5),
-                      ),
-                      title: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              model.displayName,
-                              style: theme.textTheme.bodyLarge?.copyWith(
-                                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                              ),
-                            ),
-                          ),
-                          if (isPremium && !isLockedForUser) ...[
-                            const SizedBox(width: 8),
-                            Icon(
-                              Icons.workspace_premium,
-                              size: 16,
-                              color: theme.colorScheme.primary,
-                            ),
-                          ],
-                          if (isLockedForUser) ...[
-                            const SizedBox(width: 8),
-                            Icon(
-                              Icons.lock_outline,
-                              size: 16,
-                              color: theme.colorScheme.primary,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              'Pro',
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: theme.colorScheme.primary,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                      onTap: () async {
-                        if (isLockedForUser) {
-                          // If locked for free user, close picker and show upgrade page
-                          Navigator.pop(context);
-                          // Use parent context for navigation - wait a bit for modal to close
-                          await Future.delayed(const Duration(milliseconds: 300));
-                          if (parentContext.mounted) {
-                            Navigator.of(parentContext).push(
-                              MaterialPageRoute(
-                                builder: (context) => const ProUpgradePage(),
-                              ),
-                            );
-                          }
-                        } else {
-                          // If allowed, select the model
-                          Navigator.pop(context, model);
-                        }
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
+// Model picker removed - app now uses OPENROUTER_MODEL from env only
 

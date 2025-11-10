@@ -1,6 +1,9 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:onesignal_flutter/onesignal_flutter.dart';
+import 'package:app_settings/app_settings.dart';
+import 'package:traitus/ui/widgets/haptic_modal.dart';
 
 /// Service to manage OneSignal push notifications
 class NotificationService {
@@ -137,6 +140,142 @@ class NotificationService {
     } catch (e) {
       debugPrint('NotificationService: Error removing tag: $e');
     }
+  }
+
+  /// Show a dialog to enable notifications in settings
+  /// Uses common practice wording that matches popular apps
+  static Future<void> showEnableNotificationsDialog(BuildContext context) async {
+    final theme = Theme.of(context);
+    
+    await HapticModal.showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: Icon(
+          Icons.notifications_off_outlined,
+          size: 48,
+          color: theme.colorScheme.primary,
+        ),
+        title: const Text('Notifications Disabled'),
+        content: const Text(
+          'To receive notifications, please enable them in Settings.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Not Now'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              AppSettings.openAppSettings();
+            },
+            child: const Text('Open Settings'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Show a dialog to enable microphone permission in settings
+  /// Uses common practice wording that matches popular apps
+  static Future<void> showEnableMicrophoneDialog(BuildContext context) async {
+    final theme = Theme.of(context);
+    
+    await HapticModal.showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: Icon(
+          Icons.mic_off_outlined,
+          size: 48,
+          color: theme.colorScheme.primary,
+        ),
+        title: const Text('Microphone Access Disabled'),
+        content: const Text(
+          'To use voice input, please enable microphone access in Settings.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Not Now'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              AppSettings.openAppSettings();
+            },
+            child: const Text('Open Settings'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Show a dialog to enable camera permission in settings
+  /// Uses common practice wording that matches popular apps
+  static Future<void> showEnableCameraDialog(BuildContext context) async {
+    final theme = Theme.of(context);
+    
+    await HapticModal.showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: Icon(
+          Icons.camera_alt_outlined,
+          size: 48,
+          color: theme.colorScheme.primary,
+        ),
+        title: const Text('Camera Access Disabled'),
+        content: const Text(
+          'To take photos, please enable camera access in Settings.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Not Now'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              AppSettings.openAppSettings();
+            },
+            child: const Text('Open Settings'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Show a dialog to enable photo library permission in settings
+  /// Uses common practice wording that matches popular apps
+  static Future<void> showEnablePhotoLibraryDialog(BuildContext context) async {
+    final theme = Theme.of(context);
+    
+    await HapticModal.showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: Icon(
+          Icons.photo_library_outlined,
+          size: 48,
+          color: theme.colorScheme.primary,
+        ),
+        title: const Text('Photo Library Access Disabled'),
+        content: const Text(
+          'To select photos, please enable photo library access in Settings.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Not Now'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              AppSettings.openAppSettings();
+            },
+            child: const Text('Open Settings'),
+          ),
+        ],
+      ),
+    );
   }
 }
 

@@ -224,7 +224,7 @@ INSERT INTO chats_new SELECT id::uuid, ... FROM chats;
 final chat = AiChat(
   name: 'My Chat',
   description: 'Description',
-  model: 'gpt-4',
+  // Model is now optional - app uses OPENROUTER_MODEL from env
 );
 // ID auto-generated as UUID
 ```
@@ -232,8 +232,8 @@ final chat = AiChat(
 ### ✅ Or Let Database Generate:
 ```sql
 -- Database generates on INSERT
-INSERT INTO chats (name, description, model, user_id)
-VALUES ('My Chat', 'Description', 'gpt-4', auth.uid())
+INSERT INTO chats (name, description, user_id)
+VALUES ('My Chat', 'Description', auth.uid())
 RETURNING *;
 -- Returns row with auto-generated UUID
 ```

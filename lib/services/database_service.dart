@@ -173,7 +173,7 @@ class DatabaseService {
       'created_at': message.createdAt.toIso8601String(),
       'is_pending': message.isPending,
       'has_error': message.hasError,
-      if (message.model != null) 'model': message.model,
+      if (message.model != null) 'model': message.model, // Track actual model used (important for openrouter/auto)
       if (message.imageUrls.isNotEmpty) 'image_urls': message.imageUrls,
     };
 
@@ -197,7 +197,7 @@ class DatabaseService {
           'content': message.content,
           'is_pending': message.isPending,
           'has_error': message.hasError,
-          if (message.model != null) 'model': message.model,
+          if (message.model != null) 'model': message.model, // Track actual model used (important for openrouter/auto)
           if (message.imageUrls.isNotEmpty) 'image_urls': message.imageUrls,
         })
         .eq('id', message.id)
@@ -428,7 +428,7 @@ class DatabaseService {
             name: config['name'] as String,
             shortDescription: config['shortDescription'] as String? ?? config['description'] as String? ?? '',
             systemPrompt: config['systemPrompt'] as String? ?? config['description'] as String? ?? 'You are a helpful AI assistant.',
-            model: config['model'] as String,
+            model: DefaultAIConfig.getModel(), // Always use OPENROUTER_MODEL from env
             avatarUrl: config['avatar'] as String,
           ));
         } catch (e) {
@@ -443,10 +443,8 @@ class DatabaseService {
   Future<void> _createChatsFromDefinitions(List<Map<String, dynamic>> chatDefs) async {
     for (final def in chatDefs) {
       try {
-        final preference = (def['preference'] ?? '').toString();
-        final model = (def['model'] ?? '').toString().isNotEmpty
-            ? (def['model'] as String)
-            : DefaultAIConfig.getModel(preference);
+        // Model always uses OPENROUTER_MODEL from env
+        final model = DefaultAIConfig.getModel();
         
         final description = (def['description'] ?? '') as String;
         final shortDescription = (def['shortDescription'] ?? description).toString();
@@ -491,7 +489,7 @@ class DatabaseService {
       createdAt: DateTime.parse(json['created_at'] as String),
       isPending: json['is_pending'] as bool? ?? false,
       hasError: json['has_error'] as bool? ?? false,
-      model: json['model'] as String?,
+      model: json['model'] as String?, // Track actual model used (important for openrouter/auto)
       imageUrls: imageUrls,
     );
   }

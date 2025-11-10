@@ -7,7 +7,7 @@ class AiChat {
   final String name;
   final String shortDescription;  // User-facing description shown under AI name
   final String systemPrompt;       // AI prompt (not shown to users)
-  final String model;
+  final String? model; // Optional for backward compatibility, but always uses OPENROUTER_MODEL from env
   final String? lastMessage;
   final DateTime? lastMessageTime;
   final DateTime createdAt;
@@ -28,7 +28,7 @@ class AiChat {
     required this.name,
     required this.shortDescription,
     required this.systemPrompt,
-    required this.model,
+    this.model, // Optional - will use OPENROUTER_MODEL from env if not provided
     this.lastMessage,
     this.lastMessageTime,
     DateTime? createdAt,
@@ -88,7 +88,7 @@ class AiChat {
       'name': name,
       'short_description': shortDescription,
       'system_prompt': systemPrompt,
-      'model': model,
+      if (model != null) 'model': model, // Only include if not null
       'last_message': lastMessage,
       'last_message_time': lastMessageTime?.toIso8601String(),
       'created_at': createdAt.toIso8601String(),
@@ -115,7 +115,7 @@ class AiChat {
       name: json['name'] as String,
       shortDescription: shortDesc ?? oldDescription ?? '',
       systemPrompt: systemPrompt ?? oldDescription ?? 'You are a helpful AI assistant.',
-      model: json['model'] as String,
+      model: json['model'] as String?, // Optional for backward compatibility
       lastMessage: json['last_message'] as String?,
       lastMessageTime: json['last_message_time'] != null
           ? DateTime.parse(json['last_message_time'] as String)

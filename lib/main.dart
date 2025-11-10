@@ -46,7 +46,7 @@ class MyApp extends StatelessWidget {
       child: Consumer<ThemeProvider>(
         builder: (context, themeProvider, _) {
           return MaterialApp(
-            title: 'Traitus AI Chat',
+            title: 'Traitus',
             theme: ThemeData(
               useMaterial3: true,
               colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
@@ -190,38 +190,61 @@ class _LoadingScreen extends StatelessWidget {
     
     return Scaffold(
       backgroundColor: theme.colorScheme.surface,
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // App logo or icon
-            Icon(
-              Icons.chat_bubble,
-              size: 80,
-              color: theme.colorScheme.primary,
-            ),
-            const SizedBox(height: 24),
-            Text(
-              'Traitus AI',
-              style: theme.textTheme.headlineMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-                color: theme.colorScheme.primary,
+      body: SafeArea(
+        child: SizedBox(
+          width: double.infinity,
+          height: double.infinity,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              // Spacer to push logo to center
+              const Spacer(flex: 1),
+              // App logo (transparent version for splash screen) - centered
+              Image.asset(
+                'assets/logo.png',
+                width: 120,
+                height: 120,
+                fit: BoxFit.contain,
               ),
-            ),
-            const SizedBox(height: 48),
-            CircularProgressIndicator(
-              color: theme.colorScheme.primary,
-            ),
-            if (message != null) ...[
-              const SizedBox(height: 16),
-              Text(
-                message!,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.onSurface.withOpacity(0.6),
+              // Spacer to push text to bottom
+              const Spacer(flex: 1),
+              // App name at the bottom
+              Padding(
+                padding: const EdgeInsets.only(bottom: 32),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Traitus',
+                      style: theme.textTheme.headlineMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                    if (message != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        message!,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurface.withOpacity(0.6),
+                        ),
+                      ),
+                    ] else ...[
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: theme.colorScheme.primary.withOpacity(0.6),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ],
-          ],
+          ),
         ),
       ),
     );

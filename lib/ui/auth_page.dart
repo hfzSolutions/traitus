@@ -100,14 +100,15 @@ class _AuthPageState extends State<AuthPage> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   // App Logo/Title
-                  Icon(
-                    Icons.chat_bubble_outline,
-                    size: 80,
-                    color: Theme.of(context).colorScheme.primary,
+                  Image.asset(
+                    'assets/logo.png',
+                    width: 80,
+                    height: 80,
+                    fit: BoxFit.contain,
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'Traitus AI Chat',
+                    'Traitus',
                     style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                           fontWeight: FontWeight.bold,
                         ),
