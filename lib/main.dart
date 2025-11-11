@@ -49,14 +49,27 @@ class MyApp extends StatelessWidget {
             title: 'Traitus',
             theme: ThemeData(
               useMaterial3: true,
-              colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: const Color(0xFF0167DE),
+                brightness: Brightness.light,
+              ).copyWith(
+                primary: const Color(0xFF0167DE),
+                onPrimary: Colors.white,
+                primaryContainer: const Color(0xFFE6F0FF), // light blue bubble
+                onPrimaryContainer: const Color(0xFF0B2F63),
+              ),
               brightness: Brightness.light,
             ),
             darkTheme: ThemeData(
               useMaterial3: true,
               colorScheme: ColorScheme.fromSeed(
-                seedColor: Colors.blue,
+                seedColor: const Color(0xFF0167DE),
                 brightness: Brightness.dark,
+              ).copyWith(
+                primary: const Color(0xFF0167DE),
+                onPrimary: Colors.white,
+                primaryContainer: const Color(0xFF163B6E), // darker container for dark mode
+                onPrimaryContainer: Colors.white,
               ),
               brightness: Brightness.dark,
             ),

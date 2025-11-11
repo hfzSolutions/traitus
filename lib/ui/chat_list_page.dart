@@ -195,6 +195,8 @@ class ChatListPage extends StatelessWidget {
         onPressed: () => _showCreateChatDialog(context),
         icon: const Icon(Icons.add),
         label: const Text('New AI Chat'),
+        backgroundColor: theme.colorScheme.primary,
+        foregroundColor: theme.colorScheme.onPrimary,
       ),
     );
   }

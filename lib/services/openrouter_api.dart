@@ -91,14 +91,14 @@ class OpenRouterApi {
 
   Future<String> createChatCompletion({
     required List<Map<String, dynamic>> messages,
-    String? model, // Deprecated - always uses OPENROUTER_MODEL from env
+    String? model, // Optional override; falls back to OPENROUTER_MODEL
     double? temperature,
     int? maxTokens,
   }) async {
     final uri = _endpointUri('/chat/completions');
 
     final requestBody = <String, dynamic>{
-      'model': _model, // Always use OPENROUTER_MODEL from env
+      'model': model?.isNotEmpty == true ? model : _model,
       'messages': messages,
       'max_tokens': maxTokens ?? _maxTokens,
       if (temperature != null) 'temperature': temperature,
@@ -138,14 +138,14 @@ class OpenRouterApi {
   /// Returns a Stream of Map with 'content' and optionally 'model' (when available).
   Stream<Map<String, dynamic>> streamChatCompletion({
     required List<Map<String, dynamic>> messages,
-    String? model, // Deprecated - always uses OPENROUTER_MODEL from env
+    String? model, // Optional override; falls back to OPENROUTER_MODEL
     double? temperature,
     int? maxTokens,
   }) async* {
     final uri = _endpointUri('/chat/completions');
 
     final requestBody = <String, dynamic>{
-      'model': _model, // Always use OPENROUTER_MODEL from env
+      'model': model?.isNotEmpty == true ? model : _model,
       'messages': messages,
       'stream': true, // Enable streaming
       'max_tokens': maxTokens ?? _maxTokens,
@@ -360,7 +360,7 @@ class OpenRouterApi {
           'They must be productive, positive, and broadly helpful through conversation (coaching, Q&A, brainstorming, planning, tutoring, reflection). '
           'They should NOT require executing external tasks, automations, scripts, device control, or account access—only dialogue. '
           'Avoid novelty-only, unsafe, harmful, explicit, illegal, or negative themes. '
-          'Return ONLY a strict JSON array of objects. No prose. Schema: '
+          'Return ONLY a strict JSON array of objects. No prose, no markdown code blocks, no explanations. Just the raw JSON array. Schema: '
           '{"id": string kebab-case unique, '
           ' "name": string, '
           ' "shortDescription": string <= 80 chars, '
@@ -410,9 +410,24 @@ class OpenRouterApi {
       temperature: 0.7,
     );
 
+    // Clean markdown code blocks if present (some models wrap JSON in ```json ... ```)
+    String cleanedContent = content.trim();
+    if (cleanedContent.startsWith('```')) {
+      // Remove opening markdown code block (```json or ```)
+      final lines = cleanedContent.split('\n');
+      if (lines.first.trim().startsWith('```')) {
+        lines.removeAt(0);
+      }
+      // Remove closing markdown code block (```)
+      if (lines.isNotEmpty && lines.last.trim() == '```') {
+        lines.removeLast();
+      }
+      cleanedContent = lines.join('\n').trim();
+    }
+
     List<Map<String, dynamic>> results = [];
     try {
-      final decoded = jsonDecode(content);
+      final decoded = jsonDecode(cleanedContent);
       if (decoded is List) {
         for (final item in decoded) {
           if (item is Map) {
@@ -421,9 +436,26 @@ class OpenRouterApi {
             // Support both new and legacy fields
             final shortDescription = (item['shortDescription'] ?? item['description'] ?? '').toString();
             final systemPrompt = (item['systemPrompt'] ?? item['description'] ?? '').toString();
-            final preference = (item['preference'] ?? '').toString();
-            if (id.isEmpty || name.isEmpty || preference.isEmpty) continue;
-            if (!selectedPreferences.contains(preference)) continue;
+            var preference = (item['preference'] ?? '').toString();
+            
+            // Validate required fields
+            if (id.isEmpty || name.isEmpty) {
+              continue;
+            }
+            
+            // If preference is missing, assign the first selected preference as fallback
+            if (preference.isEmpty) {
+              if (selectedPreferences.isNotEmpty) {
+                preference = selectedPreferences.first;
+              } else {
+                continue;
+              }
+            }
+            
+            // Validate preference is in selected list
+            if (!selectedPreferences.contains(preference)) {
+              continue;
+            }
             // Basic safety and usefulness filter
             final lowerName = name.toLowerCase();
             final lowerDesc = shortDescription.toLowerCase();
@@ -433,18 +465,24 @@ class OpenRouterApi {
               'scam', 'illegal', 'harm', 'self-harm', 'drug', 'narcotic'
             ];
             bool containsBanned = banned.any((w) => lowerName.contains(w) || lowerDesc.contains(w));
-            if (containsBanned) continue;
+            if (containsBanned) {
+              continue;
+            }
             // Discourage one-off novelty and external-action personas
             const novelty = ['joke', 'meme', 'pickup line', 'fortune', 'horoscope'];
             bool looksNovelty = novelty.any((w) => lowerName.contains(w) || lowerDesc.contains(w));
-            if (looksNovelty) continue;
+            if (looksNovelty) {
+              continue;
+            }
             const externalAction = [
               'automation', 'script', 'execute', 'run command', 'control device', 'control phone',
               'api call', 'integrate with', 'web scraping', 'scrape', 'deploy', 'file system',
               'shell', 'terminal', 'root', 'adb', 'keyboard macro', 'mouse macro'
             ];
             bool looksExternal = externalAction.any((w) => lowerName.contains(w) || lowerDesc.contains(w));
-            if (looksExternal) continue;
+            if (looksExternal) {
+              continue;
+            }
 
             // Attach model - always uses OPENROUTER_MODEL from env
             final model = DefaultAIConfig.getModel();

@@ -67,18 +67,29 @@ class DatabaseService {
     final userId = SupabaseService.client.auth.currentUser?.id;
     if (userId == null) throw Exception('User not authenticated');
 
+    final chatJson = chat.toJson();
+    // Remove 'model' field as it's not stored in chats table (model is stored at message level)
+    chatJson.remove('model');
+    
     final chatData = {
-      ...chat.toJson(),
+      ...chatJson,
       'user_id': userId,
     };
 
-    final response = await _client
-        .from('chats')
-        .insert(chatData)
-        .select()
-        .single();
+    try {
+      final response = await _client
+          .from('chats')
+          .insert(chatData)
+          .select()
+          .single();
 
-    return AiChat.fromJson(response);
+      debugPrint('[Database] createChat success: ${chat.name} -> ${response['id']}');
+      return AiChat.fromJson(response);
+    } catch (e) {
+      debugPrint('[Database] createChat failed for "${chat.name}": $e');
+      debugPrint('[Database] Chat data: $chatData');
+      rethrow;
+    }
   }
 
   /// Update an existing chat
@@ -392,11 +403,16 @@ class DatabaseService {
     // Create selected AI chats
     try {
       if (selectedChatDefinitions != null && selectedChatDefinitions.isNotEmpty) {
+        debugPrint('[Database] Creating ${selectedChatDefinitions.length} chats from definitions');
         await _createChatsFromDefinitions(selectedChatDefinitions);
+        debugPrint('[Database] Chat creation completed');
       } else if (selectedChatIds.isNotEmpty) {
+        debugPrint('[Database] Creating ${selectedChatIds.length} chats from IDs');
         await _createSelectedChats(selectedChatIds);
+        debugPrint('[Database] Chat creation completed');
       }
     } catch (e) {
+      debugPrint('[Database] Error creating chats: $e');
       // Proceed even if chat creation fails, profile is already saved
     }
 
@@ -420,6 +436,8 @@ class DatabaseService {
 
   /// Create selected AI chats from onboarding
   Future<void> _createSelectedChats(List<String> selectedChatIds) async {
+    int successCount = 0;
+    int failCount = 0;
     for (var chatId in selectedChatIds) {
       final config = DefaultAIConfig.getChatConfig(chatId);
       if (config != null) {
@@ -431,16 +449,22 @@ class DatabaseService {
             model: DefaultAIConfig.getModel(), // Always use OPENROUTER_MODEL from env
             avatarUrl: config['avatar'] as String,
           ));
+          successCount++;
+          debugPrint('[Database] Created chat: ${config['name']}');
         } catch (e) {
-          debugPrint('Error creating chat $chatId: $e');
+          failCount++;
+          debugPrint('[Database] Failed to create chat $chatId: $e');
           // Continue even if one chat fails
         }
       }
     }
+    debugPrint('[Database] Chat creation summary: $successCount succeeded, $failCount failed');
   }
 
   /// Create chats directly from dynamic definitions suggested during onboarding
   Future<void> _createChatsFromDefinitions(List<Map<String, dynamic>> chatDefs) async {
+    int successCount = 0;
+    int failCount = 0;
     for (final def in chatDefs) {
       try {
         // Model always uses OPENROUTER_MODEL from env
@@ -449,9 +473,10 @@ class DatabaseService {
         final description = (def['description'] ?? '') as String;
         final shortDescription = (def['shortDescription'] ?? description).toString();
         final systemPrompt = (def['systemPrompt'] ?? description).toString();
+        final chatName = (def['name'] ?? 'Assistant') as String;
 
         await createChat(AiChat(
-          name: (def['name'] ?? 'Assistant') as String,
+          name: chatName,
           shortDescription: shortDescription.isNotEmpty ? shortDescription : 'A helpful AI assistant',
           systemPrompt: systemPrompt.isNotEmpty ? systemPrompt : 'You are a helpful AI assistant.',
           model: model,
@@ -459,10 +484,16 @@ class DatabaseService {
           // We'll leave avatarUrl null to avoid storing emojis as URLs
           avatarUrl: null,
         ));
+        successCount++;
+        debugPrint('[Database] Created chat: $chatName');
       } catch (e) {
+        failCount++;
+        final chatName = (def['name'] ?? 'Unknown') as String;
+        debugPrint('[Database] Failed to create chat "$chatName": $e');
         // Continue even if one chat fails
       }
     }
+    debugPrint('[Database] Chat creation summary: $successCount succeeded, $failCount failed');
   }
 
   // ========== HELPERS ==========
