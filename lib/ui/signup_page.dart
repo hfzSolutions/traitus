@@ -1,17 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:traitus/providers/auth_provider.dart';
-import 'package:traitus/ui/signup_page.dart';
-import 'package:traitus/ui/forgot_password_page.dart';
 
-class AuthPage extends StatefulWidget {
-  const AuthPage({super.key});
+class SignupPage extends StatefulWidget {
+  const SignupPage({super.key});
 
   @override
-  State<AuthPage> createState() => _AuthPageState();
+  State<SignupPage> createState() => _SignupPageState();
 }
 
-class _AuthPageState extends State<AuthPage> {
+class _SignupPageState extends State<SignupPage> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
@@ -24,32 +22,33 @@ class _AuthPageState extends State<AuthPage> {
     super.dispose();
   }
 
-  Future<void> _handleAuth() async {
+  Future<void> _handleSignup() async {
     if (!_formKey.currentState!.validate()) return;
-
     final authProvider = context.read<AuthProvider>();
-    
     try {
-      await authProvider.signIn(
+      await authProvider.signUp(
         email: _emailController.text.trim(),
         password: _passwordController.text,
       );
-      // Do not navigate here; AuthCheckPage will render the correct screen
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.toString().replaceAll('Exception: ', '')),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString().replaceAll('Exception: ', '')),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(
+        title: const Text('Create account'),
+      ),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -60,7 +59,6 @@ class _AuthPageState extends State<AuthPage> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // App Logo/Title
                   Image.asset(
                     'assets/logo.png',
                     width: 80,
@@ -77,15 +75,13 @@ class _AuthPageState extends State<AuthPage> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Welcome back',
+                    'Create your account',
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                           color: Colors.grey,
                         ),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 48),
-
-                  // Email Field
                   TextFormField(
                     controller: _emailController,
                     keyboardType: TextInputType.emailAddress,
@@ -108,13 +104,11 @@ class _AuthPageState extends State<AuthPage> {
                     },
                   ),
                   const SizedBox(height: 16),
-
-                  // Password Field
                   TextFormField(
                     controller: _passwordController,
                     obscureText: _obscurePassword,
                     textInputAction: TextInputAction.done,
-                    onFieldSubmitted: (_) => _handleAuth(),
+                    onFieldSubmitted: (_) => _handleSignup(),
                     decoration: InputDecoration(
                       labelText: 'Password',
                       prefixIcon: const Icon(Icons.lock_outline),
@@ -138,16 +132,18 @@ class _AuthPageState extends State<AuthPage> {
                       if (value == null || value.isEmpty) {
                         return 'Please enter your password';
                       }
+                      if (value.length < 6) {
+                        return 'Password must be at least 6 characters';
+                      }
                       return null;
                     },
                   ),
                   const SizedBox(height: 24),
-
-                  // Sign In/Up Button
                   Consumer<AuthProvider>(
                     builder: (context, authProvider, _) {
                       return FilledButton(
-                        onPressed: authProvider.isLoading ? null : _handleAuth,
+                        onPressed:
+                            authProvider.isLoading ? null : _handleSignup,
                         style: FilledButton.styleFrom(
                           padding: const EdgeInsets.symmetric(vertical: 16),
                           shape: RoundedRectangleBorder(
@@ -164,47 +160,18 @@ class _AuthPageState extends State<AuthPage> {
                                 ),
                               )
                             : const Text(
-                                'Sign In',
+                                'Sign Up',
                                 style: TextStyle(fontSize: 16),
                               ),
                       );
                     },
                   ),
                   const SizedBox(height: 16),
-
-                  // Navigate to Sign Up
                   TextButton(
-                    onPressed: () async {
-                      final result = await Navigator.of(context).push<bool>(
-                        MaterialPageRoute(
-                          builder: (_) => const SignupPage(),
-                        ),
-                      );
-                      if (result == true && mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Account created successfully! Please sign in to continue.',
-                            ),
-                            backgroundColor: Colors.green,
-                            duration: Duration(seconds: 4),
-                          ),
-                        );
-                      }
+                    onPressed: () {
+                      Navigator.of(context).maybePop();
                     },
-                    child: const Text('Don\'t have an account? Sign Up'),
-                  ),
-
-                  // Forgot Password
-                  TextButton(
-                    onPressed: () async {
-                      await Navigator.of(context).push<bool>(
-                        MaterialPageRoute(
-                          builder: (_) => const ForgotPasswordPage(),
-                        ),
-                      );
-                    },
-                    child: const Text('Forgot Password?'),
+                    child: const Text('Already have an account? Sign In'),
                   ),
                 ],
               ),

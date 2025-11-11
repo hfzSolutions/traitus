@@ -4,6 +4,7 @@ import 'package:traitus/providers/auth_provider.dart';
 import 'package:traitus/providers/theme_provider.dart';
 import 'package:traitus/ui/onboarding_page.dart';
 import 'package:traitus/ui/pro_upgrade_page.dart';
+import 'package:traitus/main.dart';
 import 'package:traitus/ui/widgets/haptic_modal.dart';
 import 'package:traitus/services/entitlements_service.dart' show EntitlementsService, UserPlan;
 
@@ -185,6 +186,7 @@ class SettingsPage extends StatelessWidget {
             onPressed: () => Navigator.pop(context, true),
             style: FilledButton.styleFrom(
               backgroundColor: Theme.of(context).colorScheme.error,
+              foregroundColor: Theme.of(context).colorScheme.onError,
             ),
             child: const Text('Logout'),
           ),
@@ -194,6 +196,12 @@ class SettingsPage extends StatelessWidget {
 
     if (confirmed == true && context.mounted) {
       await authProvider.signOut();
+      if (context.mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const AuthCheckPage()),
+          (route) => false,
+        );
+      }
     }
   }
 

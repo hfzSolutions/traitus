@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -25,8 +26,10 @@ class _OnboardingPageState extends State<OnboardingPage>
     with SingleTickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
   final _usernameController = TextEditingController();
+  final _customInterestsController = TextEditingController();
   final Set<String> _selectedPreferences = {};
   final Set<String> _selectedAIChats = {};
+  final List<String> _customInterests = [];
   bool _isLoading = false;
   int _currentStep = 0;
   late AnimationController _animationController;
@@ -259,6 +262,14 @@ class _OnboardingPageState extends State<OnboardingPage>
       'icon': Icons.science,
       'color': const Color(0xFF00897B),
     },
+    {
+      'id': 'others',
+      'title': 'Others',
+      'subtitle': 'Custom Interests',
+      'description': 'Add your own interests',
+      'icon': Icons.add_circle_outline,
+      'color': const Color(0xFF757575),
+    },
   ];
 
   // Available languages
@@ -302,6 +313,7 @@ class _OnboardingPageState extends State<OnboardingPage>
   @override
   void dispose() {
     _usernameController.dispose();
+    _customInterestsController.dispose();
     _animationController.dispose();
     _loadingCarouselTimer?.cancel();
     super.dispose();
@@ -317,6 +329,17 @@ class _OnboardingPageState extends State<OnboardingPage>
     // When entering AI selection step, fetch AI-based recommendations
     if (newStep == 4) {
       _fetchAiRecommendations();
+    }
+  }
+
+  void _addCustomInterest(String interest) {
+    final trimmed = interest.trim();
+    if (trimmed.isNotEmpty && !_customInterests.contains(trimmed)) {
+      setState(() {
+        _customInterests.add(trimmed);
+        _customInterestsController.clear();
+      });
+      HapticFeedback.selectionClick();
     }
   }
 
@@ -491,7 +514,13 @@ class _OnboardingPageState extends State<OnboardingPage>
   }
 
   Future<void> _fetchAiRecommendations() async {
-    if (_selectedPreferences.isEmpty) {
+    // Combine selected preferences (excluding 'others') with custom interests
+    final preferencesForRecommendation = <String>[
+      ..._selectedPreferences.where((p) => p != 'others'),
+      ..._customInterests,
+    ];
+    
+    if (preferencesForRecommendation.isEmpty) {
       setState(() {
         _aiRecommendedChatIds = null;
         _aiDynamicChats = null;
@@ -522,7 +551,7 @@ class _OnboardingPageState extends State<OnboardingPage>
     try {
       // Try dynamic assistant definitions first
       final dynamicChats = await _openRouterApi.recommendChatDefinitions(
-        selectedPreferences: _selectedPreferences.toList(),
+        selectedPreferences: preferencesForRecommendation,
         languageCode: _selectedLanguage,
         displayName: _usernameController.text.trim().isNotEmpty
             ? _usernameController.text.trim()
@@ -540,7 +569,7 @@ class _OnboardingPageState extends State<OnboardingPage>
       // Then compute fallback ordered IDs
       final allowedIds = _availableAIChats.keys.toList();
       final ids = await _openRouterApi.recommendChatIds(
-        selectedPreferences: _selectedPreferences.toList(),
+        selectedPreferences: preferencesForRecommendation,
         allowedChatIds: allowedIds,
       );
       if (!mounted) return;
@@ -567,6 +596,12 @@ class _OnboardingPageState extends State<OnboardingPage>
   }
 
   List<Map<String, dynamic>> _getRecommendedChats() {
+    // Combine selected preferences (excluding 'others') with custom interests
+    final preferencesForFiltering = <String>[
+      ..._selectedPreferences.where((p) => p != 'others'),
+      ..._customInterests,
+    ];
+    
     // Prefer dynamic suggestions if present
     if (_aiDynamicChats != null && _aiDynamicChats!.isNotEmpty) {
       return _aiDynamicChats!;
@@ -578,14 +613,112 @@ class _OnboardingPageState extends State<OnboardingPage>
           .map((id) => byId[id])
           .where((chat) => chat != null)
           .cast<Map<String, dynamic>>()
-          .where((chat) => _selectedPreferences.contains(chat['preference']))
+          .where((chat) => preferencesForFiltering.contains(chat['preference']))
           .toList();
       if (filteredOrdered.isNotEmpty) return filteredOrdered;
     }
     // Fallback: simple filter by selected preferences
     return _availableAIChats.values
-        .where((chat) => _selectedPreferences.contains(chat['preference']))
+        .where((chat) => preferencesForFiltering.contains(chat['preference']))
         .toList();
+  }
+
+  Future<void> _skipOnboarding() async {
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Skip Personalization?'),
+        content: const Text(
+          'You can always personalize your experience later in settings. Are you sure you want to skip?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Skip'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      String? avatarUrl;
+      
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      // Upload/update profile image if selected (delete old to avoid duplicates)
+      if (_selectedImage != null) {
+        avatarUrl = await _storageService.updateUserAvatar(
+          _selectedImage!.path,
+          authProvider.userProfile?.avatarUrl,
+        );
+      }
+
+      // Complete onboarding with only profile data (no interests, experience, context, or AI chats)
+      await authProvider.completeOnboarding(
+        displayName: _usernameController.text.trim(),
+        dateOfBirth: _selectedDateOfBirth,
+        preferredLanguage: _selectedLanguage,
+        avatarUrl: avatarUrl,
+        experienceLevel: null, // Skip experience
+        useContext: null, // Skip context
+        preferences: [], // No interests
+        selectedChatIds: [], // No AI chats
+        selectedChatDefinitions: [], // No AI chat definitions
+      );
+
+      if (!mounted) return;
+
+      // Refresh chats so Home shows the latest list
+      try {
+        await context.read<ChatsListProvider>().refreshChats();
+      } catch (_) {}
+
+      // Navigate directly to chat screen
+      if (!mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const HomePage()),
+        (route) => false,
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.error_outline, color: Colors.white),
+              const SizedBox(width: 12),
+              Expanded(child: Text('Error: $e')),
+            ],
+          ),
+          backgroundColor: Colors.red.shade600,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   Future<void> _completeOnboarding() async {
@@ -615,6 +748,15 @@ class _OnboardingPageState extends State<OnboardingPage>
           .where((c) => _selectedAIChats.contains((c['id'] as String)))
           .toList();
 
+      // Combine selected preferences with custom interests
+      final allPreferences = <String>[
+        ..._selectedPreferences.where((p) => p != 'others'),
+        ..._customInterests,
+      ];
+
+      // Log what user is submitting
+      debugPrint('[Onboarding] Submitting: ${_selectedAIChats.length} AI chats, ${selectedDefs.length} definitions');
+
       // Complete onboarding with all user data
       await authProvider.completeOnboarding(
         displayName: _usernameController.text.trim(),
@@ -623,34 +765,14 @@ class _OnboardingPageState extends State<OnboardingPage>
         avatarUrl: avatarUrl,
         experienceLevel: _experienceLevel,
         useContext: _useContext,
-        preferences: _selectedPreferences.toList(),
+        preferences: allPreferences,
         selectedChatIds: _selectedAIChats.toList(),
         selectedChatDefinitions: selectedDefs,
       );
 
       if (!mounted) return;
 
-      // Show success message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              const Icon(Icons.check_circle, color: Colors.white),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'Welcome! Your AI assistants are ready.',
-                ),
-              ),
-            ],
-          ),
-          backgroundColor: Colors.green.shade600,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-      );
+      // Success toast removed per request
 
       // Refresh chats so Home shows the latest list created during onboarding
       try {
@@ -700,62 +822,29 @@ class _OnboardingPageState extends State<OnboardingPage>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Animated icon with gradient background
-            Container(
-              width: 140,
-              height: 140,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Theme.of(context).colorScheme.primary,
-                    Theme.of(context).colorScheme.tertiary,
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: Theme.of(context).colorScheme.primary.withOpacity(0.3),
-                    blurRadius: 20,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
-              ),
-              child: const Icon(
-                Icons.psychology_rounded,
-                size: 70,
-                color: Colors.white,
-              ),
+            // Traitus logo
+            Image.asset(
+              'assets/logo.png',
+              width: 160,
+              height: 160,
+              fit: BoxFit.contain,
             ),
             const SizedBox(height: 40),
             
             // Welcome text
             Text(
-              'Welcome to Traitus',
+              'Welcome',
               style: Theme.of(context).textTheme.headlineLarge?.copyWith(
                     fontWeight: FontWeight.bold,
                     letterSpacing: -0.5,
                   ),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 16),
-            
+            const SizedBox(height: 12),
             Text(
-              'Your Personal AI Assistant Hub',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.primary,
-                    fontWeight: FontWeight.w600,
-                  ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 24),
-            
-            Text(
-              'Let\'s set up your personalized experience with AI assistants tailored to your needs',
+              'Let\'s get you started',
               style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    height: 1.5,
                   ),
               textAlign: TextAlign.center,
             ),
@@ -811,7 +900,7 @@ class _OnboardingPageState extends State<OnboardingPage>
               const SizedBox(height: 12),
               
               Text(
-                'Help us personalize your experience',
+                'Set up your basic profile details',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                       height: 1.5,
@@ -1130,6 +1219,11 @@ class _OnboardingPageState extends State<OnboardingPage>
                                   _selectedPreferences.add(pref['id']);
                                 } else {
                                   _selectedPreferences.remove(pref['id']);
+                                  // Clear custom interests if "Others" is deselected
+                                  if (pref['id'] == 'others') {
+                                    _customInterests.clear();
+                                    _customInterestsController.clear();
+                                  }
                                 }
                               });
                             },
@@ -1151,7 +1245,77 @@ class _OnboardingPageState extends State<OnboardingPage>
                         }).toList(),
                       ),
                       
-                      if (_selectedPreferences.isNotEmpty) ...[
+                      // Custom interests input (shown when "Others" is selected)
+                      if (_selectedPreferences.contains('others')) ...[
+                        const SizedBox(height: 20),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _customInterestsController,
+                                decoration: InputDecoration(
+                                  hintText: 'e.g. Astronomy',
+                                  prefixIcon: const Icon(Icons.edit_rounded),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  filled: true,
+                                  fillColor: Theme.of(context).colorScheme.surface,
+                                ),
+                                textInputAction: TextInputAction.done,
+                                onSubmitted: (value) {
+                                  _addCustomInterest(value);
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            IconButton(
+                              onPressed: () {
+                                _addCustomInterest(_customInterestsController.text);
+                              },
+                              icon: const Icon(Icons.add_circle_rounded),
+                              style: IconButton.styleFrom(
+                                backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                                foregroundColor: Theme.of(context).colorScheme.onPrimaryContainer,
+                                padding: const EdgeInsets.all(12),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (_customInterests.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: _customInterests.map((interest) {
+                              return Chip(
+                                label: Text(interest),
+                                onDeleted: () {
+                                  setState(() {
+                                    _customInterests.remove(interest);
+                                  });
+                                },
+                                deleteIcon: Icon(
+                                  Icons.close_rounded,
+                                  size: 18,
+                                  color: Theme.of(context).colorScheme.onSurface,
+                                ),
+                                backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                                labelStyle: TextStyle(
+                                  color: Theme.of(context).colorScheme.onPrimaryContainer,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ],
+                      ],
+                      
+                      if (_selectedPreferences.isNotEmpty || _customInterests.isNotEmpty) ...[
                         const SizedBox(height: 16),
                         Container(
                           padding: const EdgeInsets.all(12),
@@ -1169,7 +1333,7 @@ class _OnboardingPageState extends State<OnboardingPage>
                               ),
                               const SizedBox(width: 8),
                               Text(
-                                '${_selectedPreferences.length} ${_selectedPreferences.length == 1 ? "interest" : "interests"} selected',
+                                '${(_selectedPreferences.where((p) => p != 'others').length + _customInterests.length)} ${(_selectedPreferences.where((p) => p != 'others').length + _customInterests.length) == 1 ? "interest" : "interests"} selected',
                                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                       color: Theme.of(context).colorScheme.onPrimaryContainer,
                                       fontWeight: FontWeight.w600,
@@ -1203,38 +1367,57 @@ class _OnboardingPageState extends State<OnboardingPage>
           ),
           child: SafeArea(
             top: false,
-            child: Row(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _changeStep(1),
-                    icon: const Icon(Icons.arrow_back_rounded),
-                    label: const Text('Back'),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _changeStep(1),
+                        icon: const Icon(Icons.arrow_back_rounded),
+                        label: const Text('Back'),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
                       ),
                     ),
-                  ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: (_selectedPreferences.where((p) => p != 'others').isEmpty && _customInterests.isEmpty)
+                            ? null
+                            : () {
+                                HapticFeedback.selectionClick();
+                                _changeStep(3);
+                              },
+                        icon: const Icon(Icons.arrow_forward_rounded),
+                        label: const Text('Next'),
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: _selectedPreferences.isEmpty
-                        ? null
-                        : () {
-                            HapticFeedback.selectionClick();
-                            _changeStep(3);
-                          },
-                    icon: const Icon(Icons.arrow_forward_rounded),
-                    label: const Text('Next'),
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
+                const SizedBox(height: 16),
+                GestureDetector(
+                  onTap: () {
+                    HapticFeedback.selectionClick();
+                    _skipOnboarding();
+                  },
+                  child: Text(
+                    'Skip personalization',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          decoration: TextDecoration.underline,
+                        ),
                   ),
                 ),
               ],
@@ -1338,7 +1521,7 @@ class _OnboardingPageState extends State<OnboardingPage>
                 const SizedBox(height: 32),
                 
                 // Subtle reference to selected preferences
-                if (_selectedPreferences.isNotEmpty) ...[
+                if (_selectedPreferences.where((p) => p != 'others').isNotEmpty || _customInterests.isNotEmpty) ...[
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 8.0),
                     child: Row(
@@ -1352,7 +1535,7 @@ class _OnboardingPageState extends State<OnboardingPage>
                         const SizedBox(width: 6),
                         Flexible(
                           child: Text(
-                            'Based on your ${_selectedPreferences.length} ${_selectedPreferences.length == 1 ? 'interest' : 'interests'}',
+                            'Based on your ${_selectedPreferences.where((p) => p != 'others').length + _customInterests.length} ${(_selectedPreferences.where((p) => p != 'others').length + _customInterests.length) == 1 ? 'interest' : 'interests'}',
                             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                   color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.6),
                                   fontSize: 11,
