@@ -1,12 +1,12 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:traitus/models/ai_chat.dart';
 import 'package:traitus/models/chat_message.dart';
 import 'package:traitus/services/database_service.dart';
 import 'package:traitus/services/storage_service.dart';
 import 'package:traitus/services/supabase_service.dart';
+import 'package:traitus/services/app_config_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class ChatsListProvider extends ChangeNotifier {
@@ -42,6 +42,15 @@ class ChatsListProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // Initialize app config cache early (await to ensure it's ready)
+      // This ensures model configs are available when needed
+      try {
+        await AppConfigService.instance.initialize();
+      } catch (e) {
+        debugPrint('Error initializing app config: $e');
+        // Continue anyway - will fail later if model is needed
+      }
+      
       _chats = await _dbService.fetchChats();
       // Populate unread counts concurrently
       await _refreshUnreadCounts();
@@ -50,10 +59,9 @@ class ChatsListProvider extends ChangeNotifier {
       
       // If no chats exist, create a default one
       if (_chats.isEmpty) {
-        final model = dotenv.env['OPENROUTER_MODEL'];
-        if (model == null || model.isEmpty) {
-          throw StateError('Missing OPENROUTER_MODEL. Add it to a .env file.');
-        }
+        // Get default model from database (required)
+        final model = await AppConfigService.instance.getDefaultModel();
+        
         final defaultChat = AiChat(
           name: 'AI Assistant',
           shortDescription: 'A helpful AI assistant',
@@ -142,6 +150,13 @@ class ChatsListProvider extends ChangeNotifier {
     _preloadChatMessages(chatId);
   }
 
+  /// Clear message cache for a chat without preloading
+  /// Use this when messages are deleted to immediately reflect empty state
+  void clearMessageCache(String chatId) {
+    _messageCache.remove(chatId);
+    _messageCountCache.remove(chatId);
+  }
+
   /// Add a message to the cache (for realtime updates)
   /// Checks for duplicates by message ID to prevent duplicate messages
   void addMessageToCache(String chatId, ChatMessage message) {
@@ -220,7 +235,6 @@ class ChatsListProvider extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       _error = e.toString();
-      debugPrint('Error adding chat: $e');
       notifyListeners();
       rethrow;
     }
@@ -262,6 +276,44 @@ class ChatsListProvider extends ChangeNotifier {
     } catch (e) {
       _error = e.toString();
       debugPrint('Error updating last message: $e');
+      notifyListeners();
+    }
+  }
+
+  /// Clear the last message for a chat (used when all messages are cleared)
+  Future<void> clearLastMessage(String chatId) async {
+    try {
+      final index = _chats.indexWhere((chat) => chat.id == chatId);
+      if (index != -1) {
+        final currentChat = _chats[index];
+        // Create new chat with null lastMessage and lastMessageTime
+        // We need to create a new instance because copyWith uses ?? which won't set null
+        final updatedChat = AiChat(
+          id: currentChat.id,
+          name: currentChat.name,
+          shortDescription: currentChat.shortDescription,
+          systemPrompt: currentChat.systemPrompt,
+          model: currentChat.model,
+          lastMessage: null, // Explicitly set to null
+          lastMessageTime: null, // Explicitly set to null
+          createdAt: currentChat.createdAt,
+          isPinned: currentChat.isPinned,
+          sortOrder: currentChat.sortOrder,
+          avatarUrl: currentChat.avatarUrl,
+          responseTone: currentChat.responseTone,
+          responseLength: currentChat.responseLength,
+          writingStyle: currentChat.writingStyle,
+          useEmojis: currentChat.useEmojis,
+          lastReadAt: currentChat.lastReadAt,
+          unreadCount: currentChat.unreadCount,
+        );
+        await _dbService.updateChat(updatedChat);
+        _chats[index] = updatedChat;
+        notifyListeners();
+      }
+    } catch (e) {
+      _error = e.toString();
+      debugPrint('Error clearing last message: $e');
       notifyListeners();
     }
   }

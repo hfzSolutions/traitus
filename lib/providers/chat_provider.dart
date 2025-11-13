@@ -1,9 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:traitus/models/chat_message.dart';
 import 'package:traitus/services/openrouter_api.dart';
 import 'package:traitus/services/database_service.dart';
+import 'package:traitus/services/app_config_service.dart';
 import 'package:traitus/providers/chats_list_provider.dart';
 
 class ChatProvider extends ChangeNotifier {
@@ -17,7 +17,7 @@ class ChatProvider extends ChangeNotifier {
   }) 
       : _api = api ?? OpenRouterApi(),
         _chatId = chatId ?? '',
-        _model = _getModelFromEnv(),
+        _model = model ?? _getModelFromEnv(),
         _systemPrompt = systemPrompt ?? 'You are a helpful, concise AI assistant. Use markdown for structure.',
         _responseLength = responseLength,
         _chatsListProvider = chatsListProvider,
@@ -31,11 +31,13 @@ class ChatProvider extends ChangeNotifier {
   }
 
   static String _getModelFromEnv() {
-    final value = dotenv.env['OPENROUTER_MODEL'];
-    if (value == null || value.isEmpty) {
-      throw StateError('Missing OPENROUTER_MODEL. Add it to a .env file.');
+    // Try to get from cache first
+    try {
+      return AppConfigService.instance.getCachedDefaultModel();
+    } catch (e) {
+      // Cache not available - this shouldn't happen if initialize() was called
+      throw StateError('Model cache not initialized. Ensure AppConfigService.instance.initialize() is called during app startup.');
     }
-    return value;
   }
 
   static const int _messagesPerPage = 50;
@@ -43,8 +45,8 @@ class ChatProvider extends ChangeNotifier {
   final OpenRouterApi _api;
   final DatabaseService _dbService = DatabaseService();
   final String _chatId;
-  final String _model; // Always uses OPENROUTER_MODEL from env
-  final String _systemPrompt;
+  String _model; // Uses model from chat, falls back to OPENROUTER_MODEL from env
+  String _systemPrompt;
   final String? _responseLength; // brief, balanced, detailed
   final ChatsListProvider? _chatsListProvider; // For accessing message cache
 
@@ -68,6 +70,43 @@ class ChatProvider extends ChangeNotifier {
   bool get hasMoreMessages => _hasMoreMessages;
   bool get hasMessages => _messages.where((m) => m.role != ChatRole.system).isNotEmpty;
   String get currentModel => _model;
+  
+  /// Update model and system prompt from chat
+  /// This is called when chat settings are updated
+  void updateFromChat({String? model, String? systemPrompt}) {
+    bool changed = false;
+    
+    // Update model if provided, otherwise keep current or fallback to env
+    if (model != null) {
+      final newModel = model.isNotEmpty ? model : _getModelFromEnv();
+      if (newModel != _model) {
+        _model = newModel;
+        changed = true;
+      }
+    }
+    
+    if (systemPrompt != null && systemPrompt != _systemPrompt) {
+      _systemPrompt = systemPrompt;
+      // Update system message in messages list
+      final systemIndex = _messages.indexWhere((m) => m.role == ChatRole.system);
+      if (systemIndex != -1) {
+        _messages[systemIndex] = ChatMessage(
+          role: ChatRole.system,
+          content: systemPrompt,
+        );
+      } else {
+        _messages.insert(0, ChatMessage(
+          role: ChatRole.system,
+          content: systemPrompt,
+        ));
+      }
+      changed = true;
+    }
+    
+    if (changed) {
+      _safeNotifyListeners();
+    }
+  }
   
   /// Check if the current model supports image inputs (multimodal input)
   /// Returns false by default (safe default)
@@ -128,6 +167,23 @@ class ChatProvider extends ChangeNotifier {
       }
     }
     
+    // Always ensure the system message uses the latest system prompt
+    // This is critical when settings are updated - we need to use the latest prompt
+    final systemIndex = messagesForApi.indexWhere((m) => m.role == ChatRole.system);
+    if (systemIndex != -1) {
+      // Update existing system message with current system prompt
+      messagesForApi[systemIndex] = ChatMessage(
+        role: ChatRole.system,
+        content: _systemPrompt,
+      );
+    } else {
+      // Insert system message at the beginning if it doesn't exist
+      messagesForApi.insert(0, ChatMessage(
+        role: ChatRole.system,
+        content: _systemPrompt,
+      ));
+    }
+    
     // Add new user message if provided
     if (newUserMessage != null) {
       messagesForApi.add(newUserMessage);
@@ -135,8 +191,6 @@ class ChatProvider extends ChangeNotifier {
     
     return messagesForApi;
   }
-
-  // Model is now fixed to OPENROUTER_MODEL, no need for setModel or _ensureModelAllowed
 
   Future<void> _loadMessages() async {
     if (_chatId.isEmpty || _disposed) return;
@@ -184,12 +238,35 @@ class ChatProvider extends ChangeNotifier {
         return true;
       }).toList();
       
+      // Filter out empty pending messages (they should have been cleaned up, but handle edge cases)
+      loadedMessages = loadedMessages.where((m) {
+        // Remove messages that are pending with empty content
+        if (m.isPending && m.content.trim().isEmpty) {
+          return false;
+        }
+        return true;
+      }).toList();
+      
       _messages
         ..clear()
         ..addAll(loadedMessages);
       
-      // Ensure system message is always first
-      if (_messages.isEmpty || _messages.first.role != ChatRole.system) {
+      // Ensure system message is always first and uses the latest system prompt
+      // This is important when settings are updated - we need to use the latest prompt
+      final systemIndex = _messages.indexWhere((m) => m.role == ChatRole.system);
+      if (systemIndex != -1) {
+        // Update existing system message with current system prompt
+        _messages[systemIndex] = ChatMessage(
+          role: ChatRole.system,
+          content: _systemPrompt,
+        );
+        // Move to first position if not already there
+        if (systemIndex != 0) {
+          final systemMsg = _messages.removeAt(systemIndex);
+          _messages.insert(0, systemMsg);
+        }
+      } else {
+        // Insert system message at the beginning if it doesn't exist
         _messages.insert(0, ChatMessage(
           role: ChatRole.system,
           content: _systemPrompt,
@@ -416,9 +493,15 @@ class ChatProvider extends ChangeNotifier {
           // Error saving assistant message
         }
       } else {
-        // Empty response - clean up
+        // Empty response - clean up from both memory and database
         if (!_disposed) {
           _messages.removeWhere((m) => m.id == pendingId && m.isPending);
+        }
+        // Always delete empty pending message from database
+        try {
+          await _dbService.deleteMessage(pendingId);
+        } catch (e) {
+          // Error deleting empty pending message - not critical
         }
       }
     } catch (e) {
@@ -611,10 +694,13 @@ class ChatProvider extends ChangeNotifier {
     }
     
     // Delete all messages from database
-    try {
-      await _dbService.deleteAllMessages(_chatId);
-    } catch (e) {
-      // Error deleting messages
+    await _dbService.deleteAllMessages(_chatId);
+    
+    // Clear message cache so it doesn't reload stale messages when navigating back
+    if (_chatsListProvider != null) {
+      _chatsListProvider.clearMessageCache(_chatId);
+      // Clear the last message in chat list
+      await _chatsListProvider.clearLastMessage(_chatId);
     }
     
     if (!_disposed) {

@@ -2,9 +2,11 @@ import 'package:flutter/foundation.dart';
 import 'package:traitus/config/default_ai_config.dart';
 import 'package:traitus/models/ai_chat.dart';
 import 'package:traitus/models/chat_message.dart';
+import 'package:traitus/models/model.dart';
 import 'package:traitus/models/note.dart';
 import 'package:traitus/models/user_profile.dart';
 import 'package:traitus/services/supabase_service.dart';
+import 'package:traitus/services/app_config_service.dart';
 
 class DatabaseService {
   final _client = SupabaseService.client;
@@ -68,9 +70,6 @@ class DatabaseService {
     if (userId == null) throw Exception('User not authenticated');
 
     final chatJson = chat.toJson();
-    // Remove 'model' field as it's not stored in chats table (model is stored at message level)
-    chatJson.remove('model');
-    
     final chatData = {
       ...chatJson,
       'user_id': userId,
@@ -438,6 +437,10 @@ class DatabaseService {
   Future<void> _createSelectedChats(List<String> selectedChatIds) async {
     int successCount = 0;
     int failCount = 0;
+    
+    // Get default model from database (required)
+    final defaultModel = await AppConfigService.instance.getDefaultModel();
+    
     for (var chatId in selectedChatIds) {
       final config = DefaultAIConfig.getChatConfig(chatId);
       if (config != null) {
@@ -446,7 +449,7 @@ class DatabaseService {
             name: config['name'] as String,
             shortDescription: config['shortDescription'] as String? ?? config['description'] as String? ?? '',
             systemPrompt: config['systemPrompt'] as String? ?? config['description'] as String? ?? 'You are a helpful AI assistant.',
-            model: DefaultAIConfig.getModel(), // Always use OPENROUTER_MODEL from env
+            model: defaultModel,
             avatarUrl: config['avatar'] as String,
           ));
           successCount++;
@@ -465,10 +468,12 @@ class DatabaseService {
   Future<void> _createChatsFromDefinitions(List<Map<String, dynamic>> chatDefs) async {
     int successCount = 0;
     int failCount = 0;
+    
+    // Get default model from database (required)
+    final defaultModel = await AppConfigService.instance.getDefaultModel();
+    
     for (final def in chatDefs) {
       try {
-        // Model always uses OPENROUTER_MODEL from env
-        final model = DefaultAIConfig.getModel();
         
         final description = (def['description'] ?? '') as String;
         final shortDescription = (def['shortDescription'] ?? description).toString();
@@ -479,7 +484,7 @@ class DatabaseService {
           name: chatName,
           shortDescription: shortDescription.isNotEmpty ? shortDescription : 'A helpful AI assistant',
           systemPrompt: systemPrompt.isNotEmpty ? systemPrompt : 'You are a helpful AI assistant.',
-          model: model,
+          model: defaultModel,
           // Do not submit emoji or any provided avatar for suggested assistants
           // We'll leave avatarUrl null to avoid storing emojis as URLs
           avatarUrl: null,
@@ -494,6 +499,61 @@ class DatabaseService {
       }
     }
     debugPrint('[Database] Chat creation summary: $successCount succeeded, $failCount failed');
+  }
+
+  // ========== MODELS ==========
+
+  /// Fetch all active models from the database
+  Future<List<Model>> fetchModels() async {
+    final response = await _client
+        .from('models')
+        .select()
+        .eq('is_active', true)
+        .order('name', ascending: true);
+
+    return (response as List).map((json) => Model.fromJson(json)).toList();
+  }
+
+  // ========== APP CONFIG ==========
+
+  /// Fetch a configuration value by key from the database
+  /// Returns null if the key doesn't exist
+  Future<String?> fetchAppConfig(String key) async {
+    try {
+      final response = await _client
+          .from('app_config')
+          .select('value')
+          .eq('key', key)
+          .maybeSingle();
+
+      if (response == null) return null;
+      return response['value'] as String?;
+    } catch (e) {
+      debugPrint('Error fetching app config for key "$key": $e');
+      return null;
+    }
+  }
+
+  /// Fetch all app configuration as a map
+  Future<Map<String, String>> fetchAllAppConfig() async {
+    try {
+      final response = await _client
+          .from('app_config')
+          .select('key, value');
+
+      final Map<String, String> config = {};
+      for (final item in (response as List)) {
+        final key = item['key'] as String?;
+        final value = item['value'] as String?;
+        if (key != null && value != null) {
+          config[key] = value;
+        }
+      }
+      return config;
+    } catch (e) {
+      debugPrint('Error fetching all app config: $e');
+      return {};
+    }
   }
 
   // ========== HELPERS ==========

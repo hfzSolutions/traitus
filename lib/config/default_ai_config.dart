@@ -1,14 +1,27 @@
-import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter/foundation.dart';
+import 'package:traitus/services/app_config_service.dart';
 
 /// Configuration for default AI assistants
 class DefaultAIConfig {
-  /// Get the model - always returns OPENROUTER_MODEL from environment
+  /// Get the model from database cache
+  /// This is a synchronous method that uses cached value
+  /// Falls back to a default model if cache is not available
+  /// Use getModelAsync() to fetch from database if you need the actual configured value
   static String getModel([String? assistantType]) {
-    final value = dotenv.env['OPENROUTER_MODEL'];
-    if (value == null || value.isEmpty) {
-      throw StateError('Missing OPENROUTER_MODEL. Add it to a .env file.');
+    try {
+      return AppConfigService.instance.getCachedDefaultModel();
+    } catch (e) {
+      // Fallback to default model if cache not initialized yet
+      // This can happen during app startup before initialization completes
+      // The actual model will be fetched asynchronously when needed
+      debugPrint('Warning: Model cache not initialized, using fallback model. Error: $e');
+      return 'minimax/minimax-m2:free'; // Default fallback model
     }
-    return value;
+  }
+  
+  /// Get the model asynchronously (fetches from database)
+  static Future<String> getModelAsync([String? assistantType]) async {
+    return await AppConfigService.instance.getDefaultModel();
   }
 
   /// Get all available AI chat configurations
@@ -183,28 +196,29 @@ class DefaultAIConfig {
   }
 
   /// Get quick reply snippets for lazy users
+  /// Focus on questions and follow-up prompts that encourage conversation continuation
   static List<String> getQuickReplySnippets() {
     return [
-      'Thanks!',
-      'Got it',
-      'Perfect',
-      'Sounds good',
-      'I agree',
-      'That makes sense',
       'Can you explain more?',
-      'Tell me more',
-      'Interesting',
-      'I see',
-      'Okay',
-      'Sure',
-      'Yes',
-      'No',
-      'Maybe',
-      'Let me think about it',
-      'I need help with this',
+      'Tell me more about that',
+      'What are some examples?',
+      'How does that work?',
       'Can you elaborate?',
-      'What do you think?',
-      'Any suggestions?',
+      'What do you think about...?',
+      'What else should I know?',
+      'Can you give me more details?',
+      'What are the next steps?',
+      'How can I apply this?',
+      'What would you recommend?',
+      'Can you break this down?',
+      'What about...?',
+      'Why is that important?',
+      'How do I get started?',
+      'What should I consider?',
+      'Can you show me an example?',
+      'What are the benefits?',
+      'How does this compare?',
+      'What questions should I ask?',
     ];
   }
 }

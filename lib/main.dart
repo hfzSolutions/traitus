@@ -9,6 +9,7 @@ import 'package:traitus/providers/theme_provider.dart';
 import 'package:traitus/services/notification_service.dart';
 import 'package:traitus/services/supabase_service.dart';
 import 'package:traitus/services/version_control_service.dart';
+import 'package:traitus/services/app_config_service.dart';
 import 'package:traitus/ui/auth_page.dart';
 import 'package:traitus/ui/home_page.dart';
 import 'package:traitus/ui/onboarding_page.dart';
@@ -22,6 +23,15 @@ Future<void> main() async {
   
   // Initialize Supabase
   await SupabaseService.getInstance();
+  
+  // Initialize app config (model settings from database)
+  // This must be done before creating providers that need models
+  try {
+    await AppConfigService.instance.initialize();
+  } catch (e) {
+    debugPrint('Warning: Failed to initialize app config: $e');
+    // Continue anyway - will fail later if model is needed
+  }
   
   // Initialize OneSignal notifications
   await NotificationService.initialize();

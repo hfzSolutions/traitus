@@ -7,6 +7,7 @@ Modern, cloud-powered AI chat application with user authentication and persisten
 - 🔐 **User Authentication** - Secure sign up, sign in, and password reset
 - ☁️ **Cloud Storage** - All data stored in Supabase (no local storage)
 - 💬 **AI Chat** - Multiple chat conversations with customizable AI assistants
+- 🤖 **Model Selection** - Choose different AI models for each chat
 - ⚡ **Streaming Responses** - Real-time word-by-word AI responses (like ChatGPT)
 - 🖼️ **Custom Avatars** - Personalize your AI chats with custom avatar images
 - 📝 **Notes** - Save and manage your notes
@@ -28,7 +29,12 @@ Modern, cloud-powered AI chat application with user authentication and persisten
 Follow the detailed instructions in [SUPABASE_SETUP.md](SUPABASE_SETUP.md):
 
 1. Create a Supabase project
-2. Run the SQL schema (`supabase_schema.sql`)
+2. Run the SQL migrations in order:
+   - `supabase_migration_restore_model_selection.sql` (creates models table)
+   - `supabase_migration_add_app_config_models.sql` (creates app_config table)
+   - `supabase_migration_validate_app_config_models.sql` (adds validation)
+   - `supabase_migration_add_rls_app_config_models.sql` (adds RLS)
+   - Other migrations as needed (see SUPABASE_SETUP.md)
 3. Get your Supabase URL and anon key
 
 ### 3. Configure Environment Variables
@@ -39,14 +45,12 @@ Create a `.env` file in the project root:
 # OpenRouter API Key (for AI chat)
 OPENROUTER_API_KEY=your_openrouter_api_key_here
 
-# OpenRouter Model (required)
-# See available models at: https://openrouter.ai/models
-OPENROUTER_MODEL=anthropic/claude-3-sonnet
-
 # Supabase Configuration
 SUPABASE_URL=https://xxxxxxxxxxxxx.supabase.co
 SUPABASE_ANON_KEY=your_supabase_anon_key_here
 ```
+
+**Note:** Model configuration is now stored in the database. See [MODEL_SELECTION_AND_CONFIG.md](MODEL_SELECTION_AND_CONFIG.md) for details.
 
 **Important:** Never commit your `.env` file to version control!
 
@@ -94,6 +98,8 @@ The app uses three main tables:
 
 - **`chats`** - Stores chat conversations (name, description, system prompt, last message)
 - **`messages`** - Stores individual messages within chats (role, content, model used, timestamps)
+- **`models`** - Stores available AI models that users can select from
+- **`app_config`** - Stores default model configurations (default_model, onboarding_model, quick_reply_model)
 - **`notes`** - Stores user notes (title, content, timestamps)
 
 All tables have Row Level Security (RLS) enabled, ensuring users can only access their own data.
@@ -122,6 +128,7 @@ lib/
 ├── models/                   # Data models
 │   ├── ai_chat.dart
 │   ├── chat_message.dart
+│   ├── model.dart            # Model configuration from database
 │   └── note.dart
 ├── providers/                # State management
 │   ├── auth_provider.dart
@@ -133,7 +140,8 @@ lib/
 │   ├── supabase_service.dart
 │   ├── database_service.dart
 │   ├── storage_service.dart  # Avatar upload/management
-│   └── openrouter_api.dart
+│   ├── openrouter_api.dart
+│   └── app_config_service.dart  # App configuration from database
 └── ui/                       # User interface
     ├── auth_page.dart
     ├── chat_list_page.dart
@@ -144,25 +152,33 @@ lib/
 
 ## 🔧 Configuration
 
-### OpenRouter Model Configuration
+### Model Selection and Configuration
 
-The app uses a single AI model configured via the `OPENROUTER_MODEL` environment variable. This model is used for all AI interactions across all chats.
+The app supports **user-selectable models** with database-driven configuration. All model settings are stored in the database (no environment variables needed for models).
 
-**Popular Model Options:**
-- `openrouter/auto` - Automatically selects the best available model (recommended)
-- `minimax/minimax-m2:free` - Fast and free
-- `anthropic/claude-3.5-sonnet` - Claude 3.5 Sonnet (premium)
-- `openai/gpt-4o-mini` - GPT-4 Omni Mini (premium)
+**Key Features:**
+- ✅ Users can choose different models for each chat
+- ✅ Models are managed in the `models` table
+- ✅ Default models configured in `app_config` table
+- ✅ Data integrity validation ensures config references valid models
+- ✅ Row Level Security (RLS) protects configuration
 
-**Example:**
-```bash
-OPENROUTER_MODEL=openrouter/auto
-```
+**Setup:**
+1. Run the model selection migrations (see [MODEL_SELECTION_AND_CONFIG.md](MODEL_SELECTION_AND_CONFIG.md))
+2. Models are automatically loaded from the database
+3. Users can select models when creating/editing chats
 
-**Model Tracking:**
-When using `openrouter/auto`, the app tracks which model was actually used for each message. This information is stored in the `model` field of each assistant message, allowing you to see which model generated each response.
+**Default Models:**
+- `default_model`: Used for all chats (required)
+- `onboarding_model`: Used for onboarding (optional, falls back to default)
+- `quick_reply_model`: Used for quick replies (optional, falls back to default)
 
-For a full list of available models, visit: https://openrouter.ai/models
+**Managing Models:**
+- Add models via Supabase dashboard: Insert into `models` table
+- Change default model: Update `app_config` table
+- All model values must reference valid `model_id` from `models` table
+
+For complete documentation, see [MODEL_SELECTION_AND_CONFIG.md](MODEL_SELECTION_AND_CONFIG.md)
 
 ### Supabase Settings
 
@@ -195,6 +211,7 @@ flutter run
 
 ## 📚 Documentation
 
+- [Model Selection and Configuration](MODEL_SELECTION_AND_CONFIG.md) - Complete guide to model selection and database-driven configuration
 - [Supabase Setup Guide](SUPABASE_SETUP.md) - Detailed Supabase configuration
 - [Avatar Feature Guide](AVATAR_FEATURE.md) - Custom AI avatar setup and usage
 - [App Icon Setup Guide](APP_ICON_SETUP.md) - How to add and update app icons for all platforms

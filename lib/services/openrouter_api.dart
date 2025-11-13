@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:traitus/services/app_config_service.dart';
 import 'package:traitus/config/default_ai_config.dart';
 import 'package:http/http.dart' as http;
 
@@ -22,31 +23,39 @@ class OpenRouterApi {
   }
 
   String get _model {
-    final value = dotenv.env['OPENROUTER_MODEL'];
-    if (value == null || value.isEmpty) {
-      throw StateError('Missing OPENROUTER_MODEL. Add it to a .env file.');
+    // Try to get from cache first, but this might fail if not initialized
+    // In that case, we'll need to handle it at runtime
+    try {
+      return AppConfigService.instance.getCachedDefaultModel();
+    } catch (e) {
+      // Cache not available - this shouldn't happen if initialize() was called
+      // But we'll throw a more helpful error
+      throw StateError('Model cache not initialized. Ensure AppConfigService.instance.initialize() is called during app startup.');
     }
-    return value;
   }
 
   /// Get the model for onboarding/assistant finding operations.
-  /// Falls back to the default OPENROUTER_MODEL if ONBOARDING_MODEL is not set.
+  /// Falls back to default model if not set in database.
   String get _onboardingModel {
-    final value = dotenv.env['ONBOARDING_MODEL'];
-    if (value != null && value.isNotEmpty) {
-      return value;
+    // Try to get from cached config first
+    final cached = AppConfigService.instance.getCachedConfig('onboarding_model');
+    if (cached != null && cached.isNotEmpty) {
+      return cached;
     }
+    
     // Fallback to default model
     return _model;
   }
 
   /// Get the model for quick reply generation.
-  /// Falls back to the default OPENROUTER_MODEL if QUICK_REPLY_MODEL is not set.
+  /// Falls back to default model if not set in database.
   String get _quickReplyModel {
-    final value = dotenv.env['QUICK_REPLY_MODEL'];
-    if (value != null && value.isNotEmpty) {
-      return value;
+    // Try to get from cached config first
+    final cached = AppConfigService.instance.getCachedConfig('quick_reply_model');
+    if (cached != null && cached.isNotEmpty) {
+      return cached;
     }
+    
     // Fallback to default model
     return _model;
   }
@@ -96,9 +105,10 @@ class OpenRouterApi {
     int? maxTokens,
   }) async {
     final uri = _endpointUri('/chat/completions');
+    final modelToUse = model?.isNotEmpty == true ? model : _model;
 
     final requestBody = <String, dynamic>{
-      'model': model?.isNotEmpty == true ? model : _model,
+      'model': modelToUse,
       'messages': messages,
       'max_tokens': maxTokens ?? _maxTokens,
       if (temperature != null) 'temperature': temperature,
@@ -111,26 +121,32 @@ class OpenRouterApi {
       'X-Title': dotenv.env['OPENROUTER_APP_NAME'] ?? 'Traitus',
     };
 
-    final response = await _client.post(
-      uri,
-      headers: headers,
-      body: jsonEncode(requestBody),
-    );
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw http.ClientException(
-        'OpenRouter error ${response.statusCode}: ${response.body}',
+    try {
+      final response = await _client.post(
         uri,
+        headers: headers,
+        body: jsonEncode(requestBody),
       );
-    }
 
-    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-    final choices = decoded['choices'] as List<dynamic>?;
-    final content = choices?.first?['message']?['content'] as String?;
-    if (content == null || content.isEmpty) {
-      throw StateError('No content returned by model');
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw http.ClientException(
+          'OpenRouter error ${response.statusCode}: ${response.body}',
+          uri,
+        );
+      }
+
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final choices = decoded['choices'] as List<dynamic>?;
+      final content = choices?.first?['message']?['content'] as String?;
+      
+      if (content == null || content.isEmpty) {
+        throw StateError('No content returned by model');
+      }
+      
+      return content;
+    } catch (e) {
+      rethrow;
     }
-    return content;
   }
 
   /// Stream chat completion responses using Server-Sent Events (SSE).
@@ -556,9 +572,32 @@ class OpenRouterApi {
         temperature: 0.7,
       );
 
+      // Strip markdown code block markers if present (```json ... ```)
+      String jsonContent = content.trim();
+      if (jsonContent.startsWith('```')) {
+        // Remove opening ```json or ```
+        final firstNewline = jsonContent.indexOf('\n');
+        if (firstNewline != -1) {
+          jsonContent = jsonContent.substring(firstNewline + 1);
+        } else {
+          // No newline, just remove the opening ```
+          jsonContent = jsonContent.replaceFirst(RegExp(r'^```[a-z]*\s*'), '');
+        }
+        
+        // Remove closing ```
+        jsonContent = jsonContent.replaceFirst(RegExp(r'\s*```\s*$'), '');
+        jsonContent = jsonContent.trim();
+      }
+
       // Try to parse JSON object
-      final decoded = jsonDecode(content);
-      if (decoded is Map) {
+      Map<String, dynamic>? decoded;
+      try {
+        decoded = jsonDecode(jsonContent) as Map<String, dynamic>?;
+      } catch (parseError) {
+        return null;
+      }
+      
+      if (decoded != null) {
         final name = (decoded['name'] ?? '').toString().trim();
         final shortDescription = (decoded['shortDescription'] ?? decoded['description'] ?? '').toString().trim();
         final systemPrompt = (decoded['systemPrompt'] ?? decoded['description'] ?? '').toString().trim();
@@ -581,12 +620,16 @@ class OpenRouterApi {
           'scam', 'illegal', 'harm', 'self-harm', 'drug', 'narcotic'
         ];
         bool containsBanned = banned.any((w) => lowerName.contains(w) || lowerDesc.contains(w));
-        if (containsBanned) return null;
+        if (containsBanned) {
+          return null;
+        }
 
         // Discourage novelty and external-action personas
         const novelty = ['joke', 'meme', 'pickup line', 'fortune', 'horoscope'];
         bool looksNovelty = novelty.any((w) => lowerName.contains(w) || lowerDesc.contains(w));
-        if (looksNovelty) return null;
+        if (looksNovelty) {
+          return null;
+        }
 
         const externalAction = [
           'automation', 'script', 'execute', 'run command', 'control device', 'control phone',
@@ -594,10 +637,18 @@ class OpenRouterApi {
           'shell', 'terminal', 'root', 'adb', 'keyboard macro', 'mouse macro'
         ];
         bool looksExternal = externalAction.any((w) => lowerName.contains(w) || lowerDesc.contains(w));
-        if (looksExternal) return null;
+        if (looksExternal) {
+          return null;
+        }
 
-        // Attach model - always uses OPENROUTER_MODEL from env
-        final model = DefaultAIConfig.getModel();
+        // Attach model - uses default_model from app_config table
+        String model;
+        try {
+          model = AppConfigService.instance.getCachedDefaultModel();
+        } catch (e) {
+          // Fallback to DefaultAIConfig if cache not available (shouldn't happen if initialized)
+          model = DefaultAIConfig.getModel();
+        }
 
         return {
           'name': name,
@@ -606,13 +657,13 @@ class OpenRouterApi {
           'preference': validPreference,
           'model': model,
         };
+      } else {
+        return null;
       }
     } catch (e) {
       // If parsing fails, return null - caller should fall back to manual input
       return null;
     }
-
-    return null;
   }
 
   /// Generate contextually relevant quick reply suggestions based on the conversation.
@@ -639,22 +690,149 @@ class OpenRouterApi {
       return [];
     }
 
+    // Get the last user message to detect their language and if it's a question
+    String lastUserMessage = '';
+    for (final msg in conversationHistory.reversed) {
+      if (msg['role'] == 'user') {
+        // Handle both string content and content array (for multimodal messages)
+        final content = msg['content'];
+        if (content is String) {
+          lastUserMessage = content;
+        } else if (content is List) {
+          // For multimodal messages, extract text from content array
+          for (final item in content) {
+            if (item is Map && item['type'] == 'text') {
+              lastUserMessage = item['text'] ?? '';
+              break;
+            }
+          }
+        }
+        break;
+      }
+    }
+    
+    // Detect if the user's last message is a question
+    final isQuestion = lastUserMessage.trim().endsWith('?') || 
+        RegExp(r'\b(what|how|why|when|where|who|which|can|could|would|should|is|are|do|does|did|will|may|might)\b', caseSensitive: false)
+            .hasMatch(lastUserMessage.trim().split(RegExp(r'[.!?]')).last);
+
+    // Get recent conversation context (last 3-4 exchanges) for better understanding
+    final recentConversation = <Map<String, String>>[];
+    int messageCount = 0;
+    for (final msg in conversationHistory.reversed) {
+      if (messageCount >= 8) break; // Get last 4 exchanges (user + assistant pairs)
+      
+      final role = msg['role'] as String?;
+      if (role == 'user' || role == 'assistant') {
+        String content = '';
+        final msgContent = msg['content'];
+        if (msgContent is String) {
+          content = msgContent;
+        } else if (msgContent is List) {
+          // For multimodal messages, extract text
+          for (final item in msgContent) {
+            if (item is Map && item['type'] == 'text') {
+              content = item['text'] ?? '';
+              break;
+            }
+          }
+        }
+        
+        if (content.isNotEmpty) {
+          recentConversation.insert(0, {
+            'role': role == 'user' ? 'User' : 'Assistant',
+            'content': content.length > 400 ? '${content.substring(0, 400)}...' : content,
+          });
+          messageCount++;
+        }
+      }
+    }
+
     final system = {
       'role': 'system',
       'content':
-          'You are a helpful assistant that generates short, contextually relevant quick reply suggestions for a chat interface. '
-          'Based on the AI\'s last response, generate exactly $count short, natural reply suggestions that a user might want to send. '
-          'Each suggestion should be 1-5 words, conversational, and directly relevant to the AI\'s response. '
-          'Examples: "Thanks!", "Tell me more", "Can you explain?", "That makes sense", "I need help with this". '
-          'Return ONLY a JSON array of strings. No prose, no explanations. Just the array of $count reply suggestions.',
+          'You are a helpful assistant that generates clear, conversational quick reply suggestions for a chat interface. '
+          'Your goal is to create suggestions that are SPECIFIC to the conversation context but also CLEAR and EASY TO UNDERSTAND. '
+          'Analyze the ENTIRE conversation context provided - identify specific topics, ideas, concepts, examples, or points mentioned across the conversation. '
+          'Understand the conversation flow: what was asked, what was discussed, what themes emerged. '
+          'IMPORTANT: If the user\'s last message is a QUESTION, generate suggestions that help ANSWER that question or provide answer options. '
+          'If the user\'s last message is NOT a question, generate follow-up questions that continue the conversation. '
+          'Generate exactly $count natural, conversational reply suggestions that: '
+          '(1) Are SPECIFIC to the conversation context - reference actual topics, ideas, or points discussed, '
+          '(2) Are CLEAR and EASY TO UNDERSTAND - written like natural responses a person would give, not cryptic titles or fragments, '
+          '(3) Sound conversational and natural - use complete thoughts that make immediate sense, '
+          '(4) If user asked a question: provide answer suggestions or ways to answer that question, '
+          '(5) If user made a statement: ask follow-up questions that spark curiosity and continue the conversation, '
+          '(6) Reference things from earlier in the conversation if relevant, or build on the latest points. '
+          'CRITICAL: Make suggestions that are COMPLETE and CLEAR, not title-like or cryptic. '
+          'If user asked a question, examples: "Yes, that\'s correct", "Here\'s how to do it", "Let me explain that", "I can help with that" '
+          'If user made a statement, examples: "How do those algorithms work?", "What are the other benefits?", "Can you explain that example?" '
+          'Each suggestion should be 5-10 words (approximately 30-60 characters), written as a complete, natural response that anyone can immediately understand. '
+          'Keep them concise but clear - long enough to be specific and understandable, but short enough to fit nicely in a button. '
+          'Write them like you\'re having a natural conversation - clear, specific, and easy to understand. '
+          'DO NOT create suggestions that sound like titles, headlines, or fragments. They should be full, conversational responses. '
+          'DO NOT make suggestions too long - aim for a length that fits comfortably in a button without wrapping too much. '
+          'Avoid simple acknowledgments like "Thanks!", "Got it", "Okay". '
+          'IMPORTANT: Generate suggestions in the SAME LANGUAGE as the user\'s last message. If the user wrote in Spanish, respond in Spanish. If they wrote in French, respond in French. Match the language exactly. '
+          'Return ONLY a JSON array of strings. No prose, no explanations. Just the array of $count clear, conversational reply suggestions in the user\'s language.',
     };
+
+    // Include more context from the assistant's message for better specificity
+    final assistantContext = lastAssistantMessage.length > 800 
+        ? lastAssistantMessage.substring(0, 800) 
+        : lastAssistantMessage;
+
+    final userContent = StringBuffer();
+    
+    // Include recent conversation context if available
+    if (recentConversation.length > 2) {
+      userContent.write('Recent conversation context:\n');
+      for (final msg in recentConversation) {
+        userContent.write('${msg['role']}: ${msg['content']}\n\n');
+      }
+    } else {
+      // Fallback if we don't have enough context
+      userContent.write('The AI just responded with:\n"$assistantContext"\n\n');
+      if (lastUserMessage.isNotEmpty) {
+        userContent.write('The user\'s last message was: "${lastUserMessage.substring(0, lastUserMessage.length > 200 ? 200 : lastUserMessage.length)}"\n\n');
+      }
+    }
+    
+    userContent.write('Analyze the conversation context above carefully. Identify specific topics, ideas, concepts, examples, or points mentioned throughout the conversation. '
+        'Understand the conversation flow and what has been discussed. ');
+    
+    if (isQuestion && lastUserMessage.isNotEmpty) {
+      userContent.write('IMPORTANT: The user\'s last message is a QUESTION: "${lastUserMessage.substring(0, lastUserMessage.length > 200 ? 200 : lastUserMessage.length)}" '
+          'Generate exactly $count clear, conversational quick reply suggestions that HELP ANSWER this question or provide answer options. '
+          'These should be responses the AI could give to answer the user\'s question, not more questions. '
+          'Examples: "Yes, that\'s correct", "Here\'s how to do it", "Let me explain that", "I can help with that", "That depends on...", "Here are the steps...". '
+          'Make them specific to the question asked and the conversation context. ');
+    } else {
+      userContent.write('The user\'s last message is a STATEMENT, not a question. '
+          'Generate exactly $count clear, conversational quick reply suggestions that are FOLLOW-UP QUESTIONS to continue the conversation: '
+          '(1) Reference SPECIFIC things from the conversation context - mention actual topics, examples, or points discussed, '
+          '(2) Are written as COMPLETE, NATURAL questions that are immediately clear and easy to understand, '
+          '(3) Sound like something a person would naturally ask in conversation - not titles, headlines, or fragments, '
+          '(4) Spark curiosity about specific aspects discussed in the conversation, '
+          '(5) Make the user want to explore deeper into the specific content. '
+          'For example, if the conversation mentioned "machine learning algorithms", write "How do those algorithms work?" (concise) not "Machine Learning Algorithms" (too short/cryptic) or "How do those machine learning algorithms actually work in practice?" (too long). '
+          'If the conversation mentioned "three benefits" but only discussed one, write "What are the other benefits?" (concise) not "Other Benefits" (too short) or "What are the other two benefits that you mentioned earlier in our conversation?" (too long). ');
+    }
+    
+    userContent.write('CRITICAL: Write suggestions as full, conversational responses. They should be clear and easy to understand, not cryptic or title-like. '
+        'Make them sound natural and conversational - like responses you\'d give to a friend, not search keywords or article titles. '
+        'Keep them at a nice length - clear and complete, but not too long. Aim for 5-10 words (30-60 characters). '
+        'IMPORTANT: Generate suggestions in the EXACT SAME LANGUAGE as the user\'s last message above. Match the language precisely.\n\n');
+    
+    if (isQuestion) {
+      userContent.write('Return ONLY a JSON array of strings with clear, conversational answer suggestions (5-10 words each, 30-60 characters ideal), e.g., ["Yes, that\'s correct", "Here\'s how to do it", "Let me explain that"]');
+    } else {
+      userContent.write('Return ONLY a JSON array of strings with clear, conversational, context-aware follow-up questions (5-10 words each, 30-60 characters ideal), e.g., ["How do those algorithms work?", "What are the other benefits?", "Can you explain that example?"]');
+    }
 
     final user = {
       'role': 'user',
-      'content':
-          'The AI just responded with: "${lastAssistantMessage.substring(0, lastAssistantMessage.length > 500 ? 500 : lastAssistantMessage.length)}"\n\n'
-          'Generate exactly $count short, contextually relevant quick reply suggestions that a user might want to send in response. '
-          'Return ONLY a JSON array of strings, e.g., ["Thanks!", "Tell me more", "Can you explain?"]',
+      'content': userContent.toString(),
     };
 
     try {
@@ -662,7 +840,7 @@ class OpenRouterApi {
         messages: [system, user],
         model: _quickReplyModel,
         temperature: 0.7,
-        maxTokens: 100, // Short responses only
+        maxTokens: 150, // Allow for longer, clearer suggestions
       );
 
       // Try to parse JSON array
@@ -672,7 +850,7 @@ class OpenRouterApi {
           final replies = decoded
               .whereType<String>()
               .map((s) => s.trim())
-              .where((s) => s.isNotEmpty && s.length <= 50) // Filter out empty or too long replies
+              .where((s) => s.isNotEmpty && s.length <= 80) // Keep suggestions concise (30-60 chars ideal, max 80)
               .take(count)
               .toList();
           
@@ -701,7 +879,7 @@ class OpenRouterApi {
                 }
                 return result;
               })
-              .where((s) => s.isNotEmpty && s.length <= 50)
+              .where((s) => s.isNotEmpty && s.length <= 80) // Keep suggestions concise (30-60 chars ideal, max 80)
               .take(count)
               .toList();
           

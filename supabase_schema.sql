@@ -1,6 +1,15 @@
 -- WARNING: This schema is for context only and is not meant to be run.
 -- Table order and constraints may not be valid for execution.
 
+CREATE TABLE public.app_config (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  key text NOT NULL UNIQUE,
+  value text NOT NULL,
+  description text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT app_config_pkey PRIMARY KEY (id)
+);
 CREATE TABLE public.app_version_control (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   platform text NOT NULL UNIQUE CHECK (platform = ANY (ARRAY['ios'::text, 'android'::text, 'web'::text, 'all'::text])),
@@ -38,6 +47,7 @@ CREATE TABLE public.chats (
   use_emojis boolean DEFAULT false,
   system_prompt text NOT NULL DEFAULT 'You are a helpful AI assistant.'::text,
   last_read_at timestamp with time zone,
+  model text,
   CONSTRAINT chats_pkey PRIMARY KEY (id),
   CONSTRAINT chats_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
 );
@@ -56,6 +66,17 @@ CREATE TABLE public.messages (
   CONSTRAINT messages_pkey PRIMARY KEY (id),
   CONSTRAINT messages_chat_id_fkey FOREIGN KEY (chat_id) REFERENCES public.chats(id),
   CONSTRAINT messages_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.models (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  model_id text NOT NULL UNIQUE,
+  provider text NOT NULL DEFAULT 'openrouter'::text,
+  description text,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT models_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.notes (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
