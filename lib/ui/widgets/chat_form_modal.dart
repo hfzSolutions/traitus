@@ -2,10 +2,13 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:traitus/models/ai_chat.dart';
+import 'package:traitus/models/model.dart';
 import 'package:traitus/ui/widgets/app_avatar.dart';
 import 'package:traitus/services/storage_service.dart';
 import 'package:traitus/services/openrouter_api.dart';
 import 'package:traitus/services/notification_service.dart';
+import 'package:traitus/services/database_service.dart';
+import 'package:traitus/services/app_config_service.dart';
 
 /// Reusable modal for creating or editing AI chats
 /// 
@@ -55,6 +58,7 @@ class _ChatFormModalState extends State<ChatFormModal> {
   final _imagePicker = ImagePicker();
   final _storageService = StorageService();
   final _openRouterApi = OpenRouterApi();
+  final _dbService = DatabaseService();
   
   String? _selectedImagePath;
   bool _isSaving = false;
@@ -62,6 +66,11 @@ class _ChatFormModalState extends State<ChatFormModal> {
   bool _useQuickCreate = false; // Only for creating new chats
   bool _isGenerating = false;
   bool _hasGeneratedConfig = false; // Track if we've generated config from quick create
+  
+  // Model selection
+  List<Model> _models = [];
+  String? _selectedModelId;
+  bool _isLoadingModels = false;
   
   // Response style preferences
   late String _selectedTone;
@@ -79,6 +88,10 @@ class _ChatFormModalState extends State<ChatFormModal> {
     _systemPromptController = TextEditingController(text: chat?.systemPrompt ?? '');
     _quickDescriptionController = TextEditingController();
     
+    // Initialize model selection
+    _selectedModelId = chat?.model;
+    _loadModels();
+    
     // Initialize response style preferences
     _selectedTone = chat?.responseTone ?? 'friendly';
     _selectedLength = chat?.responseLength ?? 'balanced';
@@ -87,6 +100,49 @@ class _ChatFormModalState extends State<ChatFormModal> {
     
     // Quick create is only available when creating new chats
     _useQuickCreate = widget.isCreating && chat == null;
+  }
+
+  Future<void> _loadModels() async {
+    setState(() {
+      _isLoadingModels = true;
+    });
+
+    try {
+      final models = await _dbService.fetchModels();
+      if (mounted) {
+        setState(() {
+          _models = models;
+          _isLoadingModels = false;
+          // If no model selected, prioritize default_model from app_config
+          if (_selectedModelId == null) {
+            try {
+              // Always use default_model from app_config first
+              _selectedModelId = AppConfigService.instance.getCachedDefaultModel();
+            } catch (e) {
+              // Only fallback to first model from list if default_model not available
+              if (models.isNotEmpty) {
+                _selectedModelId = models.first.modelId;
+              }
+            }
+          }
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoadingModels = false;
+        });
+        // Fallback to default model from database cache on error
+        if (_selectedModelId == null) {
+          try {
+            _selectedModelId = AppConfigService.instance.getCachedDefaultModel();
+          } catch (e) {
+            // If cache not available and no models loaded, leave as null
+            // User will need to select a model
+          }
+        }
+      }
+    }
   }
 
   @override
@@ -98,10 +154,9 @@ class _ChatFormModalState extends State<ChatFormModal> {
     super.dispose();
   }
 
-  // Model selection removed - app now uses OPENROUTER_MODEL from env only
-
   Future<void> _generateFromDescription() async {
     final description = _quickDescriptionController.text.trim();
+    
     if (description.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -120,12 +175,16 @@ class _ChatFormModalState extends State<ChatFormModal> {
       final result = await _openRouterApi.generateChatFromDescription(
         userDescription: description,
       );
-
+      
       if (result != null && mounted) {
         // Auto-fill the form with generated values
-        _nameController.text = result['name'] as String;
-        _shortDescriptionController.text = result['shortDescription'] as String;
-        _systemPromptController.text = result['systemPrompt'] as String;
+        final name = result['name'] as String;
+        final shortDescription = result['shortDescription'] as String;
+        final systemPrompt = result['systemPrompt'] as String;
+        
+        _nameController.text = name;
+        _shortDescriptionController.text = shortDescription;
+        _systemPromptController.text = systemPrompt;
         
         // Show preview in quick create mode, don't switch to manual
         setState(() {
@@ -250,11 +309,59 @@ class _ChatFormModalState extends State<ChatFormModal> {
         }
       }
 
+      // Always use default_model from app_config for new chats (especially quick create)
+      // For editing existing chats, use the selected model or default
+      String modelToUse;
+      if (widget.isCreating && widget.chat == null) {
+        // For new chats, always use default_model from app_config
+        try {
+          modelToUse = AppConfigService.instance.getCachedDefaultModel();
+        } catch (e) {
+          // Fallback to selected model if available
+          modelToUse = _selectedModelId ?? '';
+          if (modelToUse.isEmpty) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Please ensure default_model is set in app_config table.'),
+                  duration: Duration(seconds: 3),
+                ),
+              );
+            }
+            return;
+          }
+        }
+      } else {
+        // For editing existing chats, use selected model or default
+        modelToUse = _selectedModelId ?? '';
+        if (modelToUse.isEmpty) {
+          // Try to get from cache as last resort
+          try {
+            modelToUse = AppConfigService.instance.getCachedDefaultModel();
+          } catch (e) {
+            // If still empty, throw error
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Please select a model or ensure default_model is set in app_config table.'),
+                  duration: Duration(seconds: 3),
+                ),
+              );
+            }
+            return;
+          }
+        }
+      }
+
+      final name = _nameController.text.trim();
+      final shortDescription = _shortDescriptionController.text.trim();
+      final systemPrompt = _systemPromptController.text.trim();
+
       await widget.onSave(
-        name: _nameController.text.trim(),
-        shortDescription: _shortDescriptionController.text.trim(),
-        systemPrompt: _systemPromptController.text.trim(),
-        model: '', // Model always uses OPENROUTER_MODEL from env, not stored in chat
+        name: name,
+        shortDescription: shortDescription,
+        systemPrompt: systemPrompt,
+        model: modelToUse,
         avatarUrl: avatarUrl,
         responseTone: _selectedTone,
         responseLength: _selectedLength,
@@ -403,20 +510,39 @@ class _ChatFormModalState extends State<ChatFormModal> {
                                 color: theme.colorScheme.primary.withOpacity(0.2),
                               ),
                             ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                            child: Row(
                               children: [
-                                Text(
-                                  _nameController.text,
-                                  style: theme.textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                                // Avatar - matches chat list style
+                                AppAvatar(
+                                  size: 56,
+                                  name: _nameController.text.isEmpty ? 'A' : _nameController.text,
+                                  imageUrl: widget.chat?.avatarUrl,
+                                  isCircle: true,
                                 ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  _shortDescriptionController.text,
-                                  style: theme.textTheme.bodyMedium?.copyWith(
-                                    color: theme.colorScheme.onSurface.withOpacity(0.7),
+                                const SizedBox(width: 12),
+                                // Chat info - matches chat list style
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        _nameController.text,
+                                        style: theme.textTheme.titleMedium?.copyWith(
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        _shortDescriptionController.text,
+                                        style: theme.textTheme.bodyMedium?.copyWith(
+                                          color: theme.colorScheme.onSurface.withOpacity(0.7),
+                                        ),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ],
@@ -652,7 +778,36 @@ class _ChatFormModalState extends State<ChatFormModal> {
                       if (_showAdvancedSettings) ...[
                         const SizedBox(height: 16),
                         
-                        // Model selector removed - app now uses OPENROUTER_MODEL from env only
+                        // Model selector
+                        if (_isLoadingModels)
+                          const Center(child: CircularProgressIndicator())
+                        else
+                          DropdownButtonFormField<String>(
+                            value: _selectedModelId,
+                            decoration: const InputDecoration(
+                              labelText: 'AI Model',
+                              border: OutlineInputBorder(),
+                              helperText: 'All models use OpenRouter',
+                            ),
+                            items: _models.map((model) {
+                              return DropdownMenuItem<String>(
+                                value: model.modelId,
+                                child: Text(
+                                  model.name,
+                                  style: const TextStyle(fontWeight: FontWeight.w500),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              );
+                            }).toList(),
+                            onChanged: (value) {
+                              if (value != null) {
+                                setState(() {
+                                  _selectedModelId = value;
+                                });
+                              }
+                            },
+                          ),
+                        const SizedBox(height: 16),
                         
                         // Response Tone
                         DropdownButtonFormField<String>(

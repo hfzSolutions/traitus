@@ -17,8 +17,10 @@ import 'package:traitus/providers/chats_list_provider.dart';
 import 'package:traitus/ui/widgets/chat_form_modal.dart';
 import 'package:traitus/ui/widgets/app_avatar.dart';
 import 'package:traitus/ui/widgets/haptic_modal.dart';
+import 'package:traitus/ui/notes_page.dart';
 import 'package:traitus/services/notification_service.dart';
 import 'package:traitus/services/storage_service.dart';
+import 'package:traitus/services/tts_service.dart';
 
 const _uuid = Uuid();
 
@@ -48,7 +50,7 @@ class ChatPage extends StatefulWidget {
   State<ChatPage> createState() => _ChatPageState();
 }
 
-class _ChatPageState extends State<ChatPage> {
+class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final GlobalKey<_InputBarState> _inputBarKey = GlobalKey<_InputBarState>();
@@ -65,6 +67,9 @@ class _ChatPageState extends State<ChatPage> {
     _chatProvider.addListener(_onChatUpdate);
     _scrollController.addListener(_onScroll);
     
+    // Listen to app lifecycle changes (e.g., when app goes to background)
+    WidgetsBinding.instance.addObserver(this);
+    
     // Mark chat as read when page opens - do this after first frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -78,9 +83,26 @@ class _ChatPageState extends State<ChatPage> {
       }
     });
   }
+  
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // Stop TTS when app goes to background or becomes inactive
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      try {
+        final ttsService = TtsService();
+        ttsService.stop();
+      } catch (e) {
+        debugPrint('Error stopping TTS on app lifecycle change: $e');
+      }
+    }
+  }
 
   @override
   void dispose() {
+    // Remove lifecycle observer
+    WidgetsBinding.instance.removeObserver(this);
+    
     try {
       context.read<ChatsListProvider>().setActiveChat(null);
     } catch (_) {}
@@ -88,6 +110,15 @@ class _ChatPageState extends State<ChatPage> {
     _scrollController.removeListener(_onScroll);
     _controller.dispose();
     _scrollController.dispose();
+    
+    // Stop TTS playback when leaving the chat screen
+    try {
+      final ttsService = TtsService();
+      ttsService.stop();
+    } catch (e) {
+      debugPrint('Error stopping TTS on dispose: $e');
+    }
+    
     super.dispose();
   }
   
@@ -267,6 +298,9 @@ class _ChatPageState extends State<ChatPage> {
 
   Future<void> _saveMessageAsNote(String content) async {
     final notesProvider = context.read<NotesProvider>();
+    
+    // Ensure notes are loaded before opening the modal
+    await notesProvider.refreshNotes();
 
     final result = await HapticModal.showModalBottomSheet<Map<String, dynamic>>(
       context: context,
@@ -382,6 +416,7 @@ class _ChatPageState extends State<ChatPage> {
 
   void _showEditChatDialog(BuildContext context) {
     final chatsListProvider = context.read<ChatsListProvider>();
+    final chatProvider = context.read<ChatProvider>(); // Get provider before showing modal
     final chat = chatsListProvider.getChatById(widget.chatId);
     
     if (chat == null) return;
@@ -389,7 +424,7 @@ class _ChatPageState extends State<ChatPage> {
     HapticModal.showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (context) => ChatFormModal(
+      builder: (modalContext) => ChatFormModal(
         chat: chat,
         isCreating: false,
         onSave: ({
@@ -417,10 +452,15 @@ class _ChatPageState extends State<ChatPage> {
           
           await chatsListProvider.updateChat(updatedChat);
           
-          // Model is now always OPENROUTER_MODEL from env, no need to update ChatProvider
+          // Update ChatProvider with new model and system prompt
+          // Use the captured provider reference, not the modal context
+          chatProvider.updateFromChat(
+            model: updatedChat.model,
+            systemPrompt: updatedChat.getEnhancedSystemPrompt(),
+          );
           
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
+          if (modalContext.mounted) {
+            ScaffoldMessenger.of(modalContext).showSnackBar(
               const SnackBar(
                 content: Text('Chat settings updated!'),
                 duration: Duration(seconds: 2),
@@ -531,20 +571,29 @@ class _ChatPageState extends State<ChatPage> {
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () {
+            onPressed: () async {
+              Navigator.pop(context);
               try {
-                _chatProvider.resetConversation();
+                await _chatProvider.resetConversation();
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('All messages cleared'),
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                }
               } catch (e) {
                 debugPrint('Error resetting conversation: $e');
-              }
-              Navigator.pop(context);
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('All messages cleared'),
-                    duration: Duration(seconds: 2),
-                  ),
-                );
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Failed to clear messages: ${e.toString()}'),
+                      duration: const Duration(seconds: 3),
+                      backgroundColor: theme.colorScheme.error,
+                    ),
+                  );
+                }
               }
             },
             child: Text(
@@ -676,9 +725,17 @@ class _ChatPageState extends State<ChatPage> {
                   }
 
                   // Filter out system messages and pending messages that are no longer needed
+                  // Also exclude old empty pending messages (but keep current one if actively sending)
                   final items = chat.messages
                       .where((m) => m.role != ChatRole.system)
-                      .where((m) => !m.isPending || chat.isSending)
+                      .where((m) {
+                        // If pending and empty, only show if we're actively sending (it's the current message)
+                        if (m.isPending && m.content.trim().isEmpty) {
+                          return chat.isSending; // Only show if currently sending (current message)
+                        }
+                        // Show pending messages only when actively sending
+                        return !m.isPending || chat.isSending;
+                      })
                       .toList();
 
                   if (items.isEmpty) {
@@ -1087,11 +1144,13 @@ class _AssistantBubble extends StatefulWidget {
 
 class _AssistantBubbleState extends State<_AssistantBubble>
     with SingleTickerProviderStateMixin {
-  bool _showDefaults = false;
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   List<Animation<double>> _buttonAnimations = [];
   List<String> _previousQuickReplies = [];
+  final TtsService _ttsService = TtsService();
+  bool _isPlayingThisMessage = false;
+  bool _isTtsAvailable = false;
 
   @override
   void initState() {
@@ -1105,40 +1164,99 @@ class _AssistantBubbleState extends State<_AssistantBubble>
       parent: _animationController,
       curve: Curves.easeOut,
     );
-
-    // Track when message was completed
-    if (!widget.message.isPending) {
-      // Wait 2.5 seconds before showing defaults
-      Future.delayed(const Duration(milliseconds: 2500), () {
-        if (mounted) {
-          setState(() {
-            _showDefaults = true;
-          });
-        }
+    
+    // Initialize TTS service and check availability
+    _initializeTts();
+    
+    // Listen to TTS state changes
+    _ttsService.addListener(_onTtsStateChanged);
+    
+    // Check if this message is currently playing
+    _checkTtsState();
+  }
+  
+  Future<void> _initializeTts() async {
+    await _ttsService.initialize();
+    if (mounted) {
+      setState(() {
+        _isTtsAvailable = _ttsService.isAvailable;
       });
     }
+  }
+  
+  void _onTtsStateChanged() {
+    if (mounted) {
+      _checkTtsState();
+    }
+  }
+  
+  void _checkTtsState() {
+    final wasPlaying = _isPlayingThisMessage;
+    _isPlayingThisMessage = _ttsService.isPlayingMessage(widget.message.id);
+    if (wasPlaying != _isPlayingThisMessage && mounted) {
+      setState(() {});
+    }
+  }
+  
+  Future<void> _toggleTts() async {
+    if (!_isTtsAvailable) {
+      // Show helpful message if TTS isn't available (e.g., on simulator)
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Voice playback is not available on this device. Try testing on a physical device.'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+    
+    if (_isPlayingThisMessage) {
+      // Stop if currently playing this message
+      await _ttsService.stop();
+    } else {
+      // Stop any other message that might be playing
+      await _ttsService.stop();
+      // Start playing this message
+      final success = await _ttsService.speak(widget.message.content, widget.message.id);
+      if (!success && mounted) {
+        // If speak failed, TTS might have become unavailable
+        setState(() {
+          _isTtsAvailable = _ttsService.isAvailable;
+        });
+        if (!_isTtsAvailable) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Voice playback is not available on this device.'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    }
+    // Update state after a short delay to allow TTS service to update
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (mounted) {
+        _checkTtsState();
+      }
+    });
   }
 
   @override
   void didUpdateWidget(_AssistantBubble oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // If message just completed, start the timer
+    // If message just completed, reset animation
     if (oldWidget.message.isPending && !widget.message.isPending) {
-      _showDefaults = false;
       _animationController.reset();
-      // Wait 2.5 seconds before showing defaults
-      Future.delayed(const Duration(milliseconds: 2500), () {
-        if (mounted) {
-          setState(() {
-            _showDefaults = true;
-          });
-        }
-      });
     }
+    // Check TTS state when widget updates
+    _checkTtsState();
   }
 
   @override
   void dispose() {
+    _ttsService.removeListener(_onTtsStateChanged);
     _animationController.dispose();
     super.dispose();
   }
@@ -1221,10 +1339,13 @@ class _AssistantBubbleState extends State<_AssistantBubble>
         final aiGeneratedReplies = chatProvider.quickReplies;
         final shouldWait = chatProvider.shouldWaitForQuickReplies;
         
-        // Only show defaults if we're not waiting for API and either:
-        // 1. We have no AI replies AND the timeout has passed, OR
-        // 2. We explicitly set _showDefaults to true
-        final shouldShowDefaults = !shouldWait && (aiGeneratedReplies.isEmpty && _showDefaults);
+        // Only show defaults if:
+        // 1. We're not waiting for API suggestions (timeout passed or generation failed)
+        // 2. We have no AI-generated replies
+        // 3. Message is complete (not pending)
+        final shouldShowDefaults = !shouldWait && 
+            aiGeneratedReplies.isEmpty && 
+            !widget.message.isPending;
         
         final quickReplies = aiGeneratedReplies.isNotEmpty
             ? aiGeneratedReplies.take(2).toList()
@@ -1331,31 +1452,46 @@ class _AssistantBubbleState extends State<_AssistantBubble>
               padding: const EdgeInsets.only(left: 8),
               child: Row(
                 children: [
+                  // TTS Play/Pause button - only show for completed messages with content and if TTS is available
+                  if (_isTtsAvailable &&
+                      !widget.message.isPending && 
+                      !widget.message.hasError && 
+                      widget.message.content.trim().isNotEmpty) ...[
+                    IconButton(
+                      icon: Icon(
+                        _isPlayingThisMessage ? Icons.pause : Icons.volume_up,
+                        size: 20,
+                        color: _isPlayingThisMessage
+                            ? widget.theme.colorScheme.primary
+                            : widget.theme.colorScheme.onSurface.withOpacity(0.6),
+                      ),
+                      onPressed: _toggleTts,
+                      tooltip: _isPlayingThisMessage ? 'Pause voice' : 'Play voice',
+                      padding: const EdgeInsets.all(8),
+                    ),
+                    const SizedBox(width: 4),
+                  ],
                   IconButton(
                     icon: Icon(
                       Icons.content_copy,
-                      size: 16,
+                      size: 20,
                       color: widget.theme.colorScheme.onSurface.withOpacity(0.6),
                     ),
                     onPressed: widget.onCopy,
                     tooltip: 'Copy',
-                    constraints: const BoxConstraints(),
-                    padding: const EdgeInsets.all(4),
-                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.all(8),
                   ),
                   if (widget.onSave != null) ...[
                     const SizedBox(width: 4),
                     IconButton(
                       icon: Icon(
                         Icons.bookmark_outline,
-                        size: 16,
+                        size: 20,
                         color: widget.theme.colorScheme.onSurface.withOpacity(0.6),
                       ),
                       onPressed: widget.onSave,
                       tooltip: 'Save to notes',
-                      constraints: const BoxConstraints(),
-                      padding: const EdgeInsets.all(4),
-                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.all(8),
                     ),
                   ],
                   if (widget.onRegenerate != null) ...[
@@ -1363,14 +1499,12 @@ class _AssistantBubbleState extends State<_AssistantBubble>
                     IconButton(
                       icon: Icon(
                         Icons.refresh,
-                        size: 16,
+                        size: 20,
                         color: widget.theme.colorScheme.onSurface.withOpacity(0.6),
                       ),
                       onPressed: widget.onRegenerate,
                       tooltip: 'Regenerate',
-                      constraints: const BoxConstraints(),
-                      padding: const EdgeInsets.all(4),
-                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.all(8),
                     ),
                   ],
                 ],
@@ -1418,8 +1552,9 @@ class _AssistantBubbleState extends State<_AssistantBubble>
                                 style: widget.theme.textTheme.bodySmall?.copyWith(
                                   fontSize: 13,
                                 ),
-                                maxLines: 1,
+                                maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.left,
                               ),
                             ),
                           ),
@@ -2456,218 +2591,321 @@ class _SaveNoteBottomSheetState extends State<_SaveNoteBottomSheet> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final mediaQuery = MediaQuery.of(context);
-    final maxHeight = mediaQuery.size.height * 0.7;
 
-    return Container(
-      constraints: BoxConstraints(maxHeight: maxHeight),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+    return Padding(
+      padding: EdgeInsets.only(
+        bottom: mediaQuery.viewInsets.bottom,
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Handle bar
-          Container(
-            margin: const EdgeInsets.only(top: 12),
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: theme.colorScheme.onSurfaceVariant.withOpacity(0.4),
-              borderRadius: BorderRadius.circular(2),
-            ),
+      child: SafeArea(
+        top: false,
+        child: Container(
+          constraints: BoxConstraints(
+            maxHeight: mediaQuery.size.height * 0.85,
           ),
-          // Title with back button when creating new
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                if (_isCreatingNew)
-                  IconButton(
-                    icon: const Icon(Icons.arrow_back),
-                    onPressed: () {
-                      setState(() {
-                        _isCreatingNew = false;
-                        _titleController.clear();
-                      });
-                    },
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                  ),
-                if (_isCreatingNew) const SizedBox(width: 8),
-                Icon(
-                  _isCreatingNew ? Icons.add : Icons.bookmark_outline,
-                  color: theme.colorScheme.primary,
-                ),
-                const SizedBox(width: 12),
-                Text(
-                  _isCreatingNew ? 'New Note' : 'Save to Note',
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
           ),
-          const Divider(height: 1),
-          
-          // Content area
-          if (_isCreatingNew)
-            // Create new note form
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Form(
-                    key: _formKey,
-                    child: TextFormField(
-                      controller: _titleController,
-                      autofocus: true,
-                      decoration: InputDecoration(
-                        labelText: 'Note title',
-                        hintText: 'Enter a title for this note',
-                        border: const OutlineInputBorder(),
-                        prefixIcon: const Icon(Icons.title),
-                        filled: true,
-                        fillColor: theme.colorScheme.surfaceContainerHighest,
-                      ),
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Please enter a title';
-                        }
-                        return null;
-                      },
-                      onFieldSubmitted: (value) => _handleCreateNote(),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  FilledButton.icon(
-                    onPressed: _handleCreateNote,
-                    icon: const Icon(Icons.check),
-                    label: const Text('Create Note'),
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                  ),
-                ],
-              ),
-            )
-          else
-            // List of existing notes
-            Flexible(
-              child: Column(
+          child: Consumer<NotesProvider>(
+            builder: (context, notesProvider, _) {
+              // Use notes from provider (always up-to-date) instead of widget parameter
+              final notes = notesProvider.notes;
+              
+              return Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (widget.existingNotes.isNotEmpty)
-                    Flexible(
-                      child: ListView.builder(
-                        shrinkWrap: true,
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        itemCount: widget.existingNotes.length,
-                        itemBuilder: (context, index) {
-                          final note = widget.existingNotes[index];
-                          final isAlreadySaved = _noteContainsContent(note);
-                          
-                          return ListTile(
-                            leading: Icon(
-                              isAlreadySaved ? Icons.bookmark : Icons.bookmark_outline,
-                              color: isAlreadySaved 
-                                  ? theme.colorScheme.primary
-                                  : theme.colorScheme.primary.withOpacity(0.7),
-                            ),
-                            title: Text(
-                              note.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.bodyLarge?.copyWith(
-                                fontWeight: isAlreadySaved ? FontWeight.w600 : FontWeight.normal,
-                              ),
-                            ),
-                            trailing: IconButton(
-                              icon: Icon(
-                                isAlreadySaved ? Icons.remove_circle : Icons.add_circle,
-                                color: isAlreadySaved 
-                                    ? theme.colorScheme.error
-                                    : theme.colorScheme.primary,
-                                size: 28,
-                              ),
-                              onPressed: () async {
-                                if (isAlreadySaved) {
-                                  await widget.onRemoveFromNote(note.title);
-                                  if (context.mounted) {
-                                    Navigator.pop(context, {'action': 'remove'});
-                                  }
-                                } else {
-                                  await widget.onSaveToNote(note.title);
-                                  if (context.mounted) {
-                                    Navigator.pop(context, {'action': 'add'});
-                                  }
-                                }
-                              },
-                              tooltip: isAlreadySaved ? 'Remove from this note' : 'Add to this note',
-                            ),
-                            onTap: () async {
-                              if (isAlreadySaved) {
-                                await widget.onRemoveFromNote(note.title);
-                                if (context.mounted) {
-                                  Navigator.pop(context, {'action': 'remove'});
-                                }
-                              } else {
-                                await widget.onSaveToNote(note.title);
-                                if (context.mounted) {
-                                  Navigator.pop(context, {'action': 'add'});
-                                }
-                              }
-                            },
-                          );
-                        },
-                      ),
-                    ),
-                  // Empty state if no notes
-                  if (widget.existingNotes.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
-                      child: Text(
-                        'No saved notes yet. Create your first note below.',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: theme.colorScheme.onSurface.withOpacity(0.6),
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  // Add new note button
+                  // Handle bar
                   Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(16),
+                    margin: const EdgeInsets.only(top: 12),
+                    width: 40,
+                    height: 4,
                     decoration: BoxDecoration(
-                      border: Border(
-                        top: BorderSide(
-                          color: theme.colorScheme.outlineVariant,
-                          width: 1,
-                        ),
-                      ),
-                    ),
-                    child: FilledButton.icon(
-                      onPressed: () {
-                        setState(() {
-                          _isCreatingNew = true;
-                        });
-                      },
-                      icon: const Icon(Icons.add),
-                      label: const Text('Add New Note'),
-                      style: FilledButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
+                      color: theme.colorScheme.onSurfaceVariant.withOpacity(0.4),
+                      borderRadius: BorderRadius.circular(2),
                     ),
                   ),
+                  
+                  // Title
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
+                    child: Row(
+                      children: [
+                        if (_isCreatingNew)
+                          IconButton(
+                            icon: const Icon(Icons.arrow_back),
+                            onPressed: () {
+                              setState(() {
+                                _isCreatingNew = false;
+                                _titleController.clear();
+                              });
+                            },
+                            tooltip: 'Back',
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        Expanded(
+                          child: Text(
+                            _isCreatingNew ? 'Create New Note' : 'Save to Note',
+                            style: theme.textTheme.headlineSmall?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        if (!_isCreatingNew)
+                          TextButton.icon(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => const NotesPage(isInTabView: false),
+                                ),
+                              );
+                            },
+                            icon: const Icon(Icons.list, size: 18),
+                            label: const Text('View All'),
+                            style: TextButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  
+                  // Content area
+                  Flexible(
+                    child: _isCreatingNew
+                        ? // Create new note form
+                          SingleChildScrollView(
+                            padding: const EdgeInsets.all(20),
+                            child: Form(
+                              key: _formKey,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Text(
+                                    'Give your note a title to save this message.',
+                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                      color: theme.colorScheme.onSurface.withOpacity(0.7),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 20),
+                                  TextFormField(
+                                    controller: _titleController,
+                                    autofocus: true,
+                                    decoration: InputDecoration(
+                                      labelText: 'Note Title',
+                                      hintText: 'e.g., Important Ideas, Meeting Notes',
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      filled: true,
+                                      fillColor: theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
+                                      prefixIcon: const Icon(Icons.title),
+                                    ),
+                                    validator: (value) {
+                                      if (value == null || value.trim().isEmpty) {
+                                        return 'Please enter a title';
+                                      }
+                                      return null;
+                                    },
+                                    onFieldSubmitted: (value) => _handleCreateNote(),
+                                  ),
+                                  const SizedBox(height: 24),
+                                  FilledButton.icon(
+                                    onPressed: _handleCreateNote,
+                                    icon: const Icon(Icons.check),
+                                    label: const Text('Create Note'),
+                                    style: FilledButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(vertical: 16),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
+                        : // List of existing notes
+                          notes.isEmpty
+                              ? // Empty state
+                                SingleChildScrollView(
+                                  padding: const EdgeInsets.all(20),
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      const SizedBox(height: 40),
+                                      Icon(
+                                        Icons.bookmark_border,
+                                        size: 64,
+                                        color: theme.colorScheme.onSurface.withOpacity(0.3),
+                                      ),
+                                      const SizedBox(height: 16),
+                                      Text(
+                                        'No Notes Yet',
+                                        style: theme.textTheme.titleLarge?.copyWith(
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'Create your first note to save messages and organize your thoughts.',
+                                        style: theme.textTheme.bodyMedium?.copyWith(
+                                          color: theme.colorScheme.onSurface.withOpacity(0.6),
+                                        ),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                      const SizedBox(height: 32),
+                                      FilledButton.icon(
+                                        onPressed: () {
+                                          setState(() {
+                                            _isCreatingNew = true;
+                                          });
+                                        },
+                                        icon: const Icon(Icons.add),
+                                        label: const Text('Create First Note'),
+                                        style: FilledButton.styleFrom(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 24,
+                                            vertical: 16,
+                                          ),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                )
+                              : // Notes list
+                                Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    // Notes list
+                                    Flexible(
+                                      child: ListView.separated(
+                                        shrinkWrap: true,
+                                        padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                                        itemCount: notes.length,
+                                        separatorBuilder: (context, index) => const Divider(height: 1),
+                                        itemBuilder: (context, index) {
+                                          final note = notes[index];
+                                          final isAlreadySaved = _noteContainsContent(note);
+                                          
+                                          return ListTile(
+                                            contentPadding: const EdgeInsets.symmetric(
+                                              horizontal: 0,
+                                              vertical: 8,
+                                            ),
+                                            title: Text(
+                                              note.title,
+                                              style: theme.textTheme.bodyLarge?.copyWith(
+                                                fontWeight: isAlreadySaved
+                                                    ? FontWeight.w600
+                                                    : FontWeight.normal,
+                                                color: isAlreadySaved
+                                                    ? theme.colorScheme.primary
+                                                    : null,
+                                              ),
+                                            ),
+                                            subtitle: note.content.isNotEmpty
+                                                ? Text(
+                                                    note.content.length > 50
+                                                        ? '${note.content.substring(0, 50)}...'
+                                                        : note.content,
+                                                    style: theme.textTheme.bodySmall?.copyWith(
+                                                      color: theme.colorScheme.onSurface.withOpacity(0.6),
+                                                    ),
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
+                                                  )
+                                                : null,
+                                            trailing: FilledButton(
+                                              onPressed: () async {
+                                                if (isAlreadySaved) {
+                                                  await widget.onRemoveFromNote(note.title);
+                                                  if (context.mounted) {
+                                                    Navigator.pop(context, {'action': 'remove'});
+                                                  }
+                                                } else {
+                                                  await widget.onSaveToNote(note.title);
+                                                  if (context.mounted) {
+                                                    Navigator.pop(context, {'action': 'add'});
+                                                  }
+                                                }
+                                              },
+                                              style: FilledButton.styleFrom(
+                                                backgroundColor: isAlreadySaved
+                                                    ? theme.colorScheme.error
+                                                    : theme.colorScheme.primary,
+                                                foregroundColor: isAlreadySaved
+                                                    ? theme.colorScheme.onError
+                                                    : theme.colorScheme.onPrimary,
+                                                padding: const EdgeInsets.symmetric(
+                                                  horizontal: 16,
+                                                  vertical: 8,
+                                                ),
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius: BorderRadius.circular(12),
+                                                ),
+                                              ),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Icon(
+                                                    isAlreadySaved ? Icons.remove : Icons.add,
+                                                    size: 18,
+                                                  ),
+                                                  const SizedBox(width: 4),
+                                                  Text(
+                                                    isAlreadySaved ? 'Remove' : 'Add',
+                                                    style: const TextStyle(fontSize: 13),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                    // Add new note button
+                                    Container(
+                                      width: double.infinity,
+                                      padding: const EdgeInsets.all(20),
+                                      decoration: BoxDecoration(
+                                        border: Border(
+                                          top: BorderSide(
+                                            color: theme.colorScheme.outlineVariant,
+                                            width: 1,
+                                          ),
+                                        ),
+                                      ),
+                                      child: OutlinedButton.icon(
+                                        onPressed: () {
+                                          setState(() {
+                                            _isCreatingNew = true;
+                                          });
+                                        },
+                                        icon: const Icon(Icons.add),
+                                        label: const Text('Create New Note'),
+                                        style: OutlinedButton.styleFrom(
+                                          padding: const EdgeInsets.symmetric(vertical: 14),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                  ),
                 ],
-              ),
-            ),
-          
-          // Bottom padding for safe area
-          SizedBox(height: mediaQuery.padding.bottom),
-        ],
+              );
+            },
+          ),
+        ),
       ),
     );
   }

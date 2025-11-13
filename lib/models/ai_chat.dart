@@ -7,7 +7,7 @@ class AiChat {
   final String name;
   final String shortDescription;  // User-facing description shown under AI name
   final String systemPrompt;       // AI prompt (not shown to users)
-  final String? model; // Optional for backward compatibility, but always uses OPENROUTER_MODEL from env
+  final String? model; // Model ID from models table, falls back to OPENROUTER_MODEL from env
   final String? lastMessage;
   final DateTime? lastMessageTime;
   final DateTime createdAt;
@@ -28,7 +28,7 @@ class AiChat {
     required this.name,
     required this.shortDescription,
     required this.systemPrompt,
-    this.model, // Optional - will use OPENROUTER_MODEL from env if not provided
+    this.model, // Model ID from models table, falls back to OPENROUTER_MODEL from env if not provided
     this.lastMessage,
     this.lastMessageTime,
     DateTime? createdAt,

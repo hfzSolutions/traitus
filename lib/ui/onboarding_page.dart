@@ -548,9 +548,12 @@ class _OnboardingPageState extends State<OnboardingPage>
       });
     });
 
+    List<Map<String, dynamic>>? dynamicChats;
+    bool dynamicChatsSucceeded = false;
+    
+    // Try dynamic assistant definitions first
     try {
-      // Try dynamic assistant definitions first
-      final dynamicChats = await _openRouterApi.recommendChatDefinitions(
+      dynamicChats = await _openRouterApi.recommendChatDefinitions(
         selectedPreferences: preferencesForRecommendation,
         languageCode: _selectedLanguage,
         displayName: _usernameController.text.trim().isNotEmpty
@@ -560,38 +563,61 @@ class _OnboardingPageState extends State<OnboardingPage>
         experienceLevel: _experienceLevel,
         useContext: _useContext,
       );
+      dynamicChatsSucceeded = true;
       if (mounted) {
         setState(() {
-          _aiDynamicChats = dynamicChats.isNotEmpty ? dynamicChats : null;
+          _aiDynamicChats = dynamicChats!.isNotEmpty ? dynamicChats : null;
         });
       }
-
-      // Then compute fallback ordered IDs
-      final allowedIds = _availableAIChats.keys.toList();
-      final ids = await _openRouterApi.recommendChatIds(
-        selectedPreferences: preferencesForRecommendation,
-        allowedChatIds: allowedIds,
-      );
-      if (!mounted) return;
-      setState(() {
-        _aiRecommendedChatIds = ids;
-      });
     } catch (e) {
+      // Dynamic chats failed, will try fallback
+      dynamicChatsSucceeded = false;
       if (mounted) {
         setState(() {
-        _recommendError = e.toString();
-        _aiRecommendedChatIds = null; // Fallback will be used
-        _aiDynamicChats = null;
+          _aiDynamicChats = null;
         });
       }
-    } finally {
+    }
+
+    // Only compute fallback ordered IDs if dynamic chats failed or returned empty
+    if (!dynamicChatsSucceeded || (dynamicChats != null && dynamicChats.isEmpty)) {
+      try {
+        final allowedIds = _availableAIChats.keys.toList();
+        final ids = await _openRouterApi.recommendChatIds(
+          selectedPreferences: preferencesForRecommendation,
+          allowedChatIds: allowedIds,
+        );
+        if (!mounted) return;
+        setState(() {
+          _aiRecommendedChatIds = ids;
+          _recommendError = null; // Clear error if fallback succeeds
+        });
+      } catch (e) {
+        // Fallback also failed
+        if (mounted) {
+          setState(() {
+            _recommendError = e.toString();
+            _aiRecommendedChatIds = null;
+          });
+        }
+      }
+    } else {
+      // Clear fallback IDs since we have dynamic chats
       if (mounted) {
         setState(() {
-          _isRecommending = false;
+          _aiRecommendedChatIds = null;
+          _recommendError = null; // Clear any previous errors
         });
-        HapticFeedback.selectionClick();
-        _loadingCarouselTimer?.cancel();
       }
+    }
+    
+    // Final cleanup
+    if (mounted) {
+      setState(() {
+        _isRecommending = false;
+      });
+      HapticFeedback.selectionClick();
+      _loadingCarouselTimer?.cancel();
     }
   }
 
