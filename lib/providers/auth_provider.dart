@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:traitus/models/user_profile.dart';
 import 'package:traitus/services/database_service.dart';
 import 'package:traitus/services/supabase_service.dart';
+import 'package:traitus/services/notification_service.dart';
 
 class AuthProvider extends ChangeNotifier {
   final SupabaseService _supabaseService;
@@ -35,8 +36,12 @@ class AuthProvider extends ChangeNotifier {
       _user = state.session?.user;
       if (_user != null) {
         _loadUserProfile();
+        // Link OneSignal to user ID for targeted notifications
+        NotificationService.setExternalUserId(_user!.id);
       } else {
         _userProfile = null;
+        // Clear OneSignal external user ID on logout
+        NotificationService.clearExternalUserId();
       }
       notifyListeners();
     });
@@ -98,6 +103,8 @@ class AuthProvider extends ChangeNotifier {
         password: password,
       );
       _user = response.user;
+      // Link OneSignal to user ID for targeted notifications
+      await NotificationService.setExternalUserId(_user!.id);
     } catch (e) {
       _error = e.toString();
       rethrow;
@@ -116,6 +123,8 @@ class AuthProvider extends ChangeNotifier {
       await _supabaseService.signOut();
       _user = null;
       _userProfile = null;
+      // Clear OneSignal external user ID on logout
+      await NotificationService.clearExternalUserId();
     } catch (e) {
       _error = e.toString();
     } finally {
@@ -200,6 +209,24 @@ class AuthProvider extends ChangeNotifier {
 
     try {
       await _supabaseService.resetPassword(email);
+    } catch (e) {
+      _error = e.toString();
+      rethrow;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> signInWithGoogle() async {
+    _isLoading = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      await _supabaseService.signInWithGoogle();
+      // Note: The actual authentication happens via OAuth callback
+      // The auth state will be updated via _listenToAuthChanges
     } catch (e) {
       _error = e.toString();
       rethrow;

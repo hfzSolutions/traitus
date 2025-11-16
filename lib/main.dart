@@ -10,6 +10,7 @@ import 'package:traitus/services/notification_service.dart';
 import 'package:traitus/services/supabase_service.dart';
 import 'package:traitus/services/version_control_service.dart';
 import 'package:traitus/services/app_config_service.dart';
+import 'package:traitus/services/activity_service.dart';
 import 'package:traitus/ui/auth_page.dart';
 import 'package:traitus/ui/home_page.dart';
 import 'package:traitus/ui/onboarding_page.dart';
@@ -99,7 +100,7 @@ class AuthCheckPage extends StatefulWidget {
   State<AuthCheckPage> createState() => _AuthCheckPageState();
 }
 
-class _AuthCheckPageState extends State<AuthCheckPage> {
+class _AuthCheckPageState extends State<AuthCheckPage> with WidgetsBindingObserver {
   VersionCheckStatus? _versionStatus;
   bool _isCheckingVersion = true;
   bool _hasShownOptionalUpdate = false;
@@ -107,7 +108,34 @@ class _AuthCheckPageState extends State<AuthCheckPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _checkVersion();
+    // Track initial app open
+    _updateActivity();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // Track when app comes to foreground
+    if (state == AppLifecycleState.resumed) {
+      _updateActivity();
+    }
+  }
+
+  Future<void> _updateActivity() async {
+    try {
+      await ActivityService().updateLastActivity();
+    } catch (e) {
+      debugPrint('Error updating activity: $e');
+      // Don't block app if activity tracking fails
+    }
   }
 
   Future<void> _checkVersion() async {

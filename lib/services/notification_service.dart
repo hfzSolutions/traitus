@@ -8,6 +8,10 @@ import 'package:traitus/ui/widgets/haptic_modal.dart';
 /// Service to manage OneSignal push notifications
 class NotificationService {
   static bool _initialized = false;
+  
+  /// Callback function to handle navigation when a notification is clicked
+  /// Set this from your app to handle deep linking to chats
+  static Function(String chatId)? onNotificationChatTap;
 
   /// Initialize OneSignal with app ID from environment
   static Future<void> initialize() async {
@@ -31,18 +35,47 @@ class NotificationService {
 
       // Request notification permission
       // This will show the native permission dialog on iOS
-      OneSignal.Notifications.requestPermission(true);
+      final permissionGranted = await OneSignal.Notifications.requestPermission(true);
+      debugPrint('NotificationService: Permission granted: $permissionGranted');
 
-      // Optional: Set up notification click handlers
+      // Get and log user ID for verification
+      try {
+        // Wait a bit for subscription to complete
+        await Future.delayed(const Duration(seconds: 1));
+        final userId = OneSignal.User.pushSubscription.id;
+        debugPrint('NotificationService: OneSignal User ID: $userId');
+        
+        // Log subscription status
+        final isSubscribed = OneSignal.User.pushSubscription.optedIn;
+        final status = isSubscribed == true ? "Subscribed" : "Not subscribed";
+        debugPrint('NotificationService: Subscription status: $status');
+      } catch (e) {
+        debugPrint('NotificationService: Could not get user ID yet: $e');
+      }
+
+      // Set up notification click handlers for deep linking
       OneSignal.Notifications.addClickListener((event) {
         debugPrint('NotificationService: Notification clicked');
+        debugPrint('Title: ${event.notification.title}');
+        debugPrint('Body: ${event.notification.body}');
         debugPrint('Data: ${event.notification.additionalData}');
         
-        // TODO: Handle notification click (e.g., navigate to specific chat)
-        // You can access notification data like:
-        // - event.notification.title
-        // - event.notification.body
-        // - event.notification.additionalData (custom data)
+        // Handle deep linking to chat if chat_id is present
+        final additionalData = event.notification.additionalData;
+        if (additionalData != null) {
+          final type = additionalData['type'] as String?;
+          final chatId = additionalData['chat_id'] as String?;
+          
+          if (type == 're_engagement' && chatId != null) {
+            debugPrint('NotificationService: Opening chat $chatId from re-engagement notification');
+            // Call the navigation callback if set
+            if (onNotificationChatTap != null) {
+              onNotificationChatTap!(chatId);
+            } else {
+              debugPrint('NotificationService: Warning - onNotificationChatTap callback not set. Cannot navigate to chat.');
+            }
+          }
+        }
       });
 
       // Optional: Set up notification received handler (when app is in foreground)
@@ -60,6 +93,7 @@ class NotificationService {
 
       _initialized = true;
       debugPrint('NotificationService: Initialized successfully');
+      debugPrint('NotificationService: ✅ Ready to receive notifications!');
     } catch (e) {
       debugPrint('NotificationService: Error initializing: $e');
     }

@@ -10,6 +10,9 @@ class UserProfile {
   final List<String> preferences;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final DateTime? lastAppActivity;
+  final bool reEngagementEnabled;
+  final DateTime? lastReEngagementSent;
 
   UserProfile({
     required this.id,
@@ -23,6 +26,9 @@ class UserProfile {
     this.preferences = const [],
     DateTime? createdAt,
     DateTime? updatedAt,
+    this.lastAppActivity,
+    this.reEngagementEnabled = true,
+    this.lastReEngagementSent,
   })  : createdAt = createdAt ?? DateTime.now(),
         updatedAt = updatedAt ?? DateTime.now();
 
@@ -48,6 +54,13 @@ class UserProfile {
       updatedAt: json['updated_at'] != null
           ? DateTime.parse(json['updated_at'] as String)
           : null,
+      lastAppActivity: json['last_app_activity'] != null
+          ? DateTime.parse(json['last_app_activity'] as String)
+          : null,
+      reEngagementEnabled: json['re_engagement_enabled'] as bool? ?? true,
+      lastReEngagementSent: json['last_re_engagement_sent'] != null
+          ? DateTime.parse(json['last_re_engagement_sent'] as String)
+          : null,
     );
   }
 
@@ -65,6 +78,9 @@ class UserProfile {
       'preferences': preferences,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
+      'last_app_activity': lastAppActivity?.toIso8601String(),
+      're_engagement_enabled': reEngagementEnabled,
+      'last_re_engagement_sent': lastReEngagementSent?.toIso8601String(),
     };
   }
 
@@ -78,6 +94,9 @@ class UserProfile {
     String? useContext,
     bool? onboardingCompleted,
     List<String>? preferences,
+    DateTime? lastAppActivity,
+    bool? reEngagementEnabled,
+    DateTime? lastReEngagementSent,
   }) {
     return UserProfile(
       id: id,
@@ -91,6 +110,9 @@ class UserProfile {
       preferences: preferences ?? this.preferences,
       createdAt: createdAt,
       updatedAt: DateTime.now(),
+      lastAppActivity: lastAppActivity ?? this.lastAppActivity,
+      reEngagementEnabled: reEngagementEnabled ?? this.reEngagementEnabled,
+      lastReEngagementSent: lastReEngagementSent ?? this.lastReEngagementSent,
     );
   }
 }

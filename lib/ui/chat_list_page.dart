@@ -11,11 +11,77 @@ import 'package:traitus/ui/settings_page.dart';
 import 'package:traitus/ui/widgets/chat_form_modal.dart';
 import 'package:traitus/ui/widgets/app_avatar.dart';
 import 'package:traitus/ui/widgets/haptic_modal.dart';
+import 'package:traitus/services/notification_service.dart';
 
-class ChatListPage extends StatelessWidget {
+class ChatListPage extends StatefulWidget {
   const ChatListPage({super.key, this.isInTabView = false});
   
   final bool isInTabView;
+
+  @override
+  State<ChatListPage> createState() => _ChatListPageState();
+}
+
+class _ChatListPageState extends State<ChatListPage> {
+  @override
+  void initState() {
+    super.initState();
+    // Set up notification deep linking callback
+    NotificationService.onNotificationChatTap = _navigateToChat;
+  }
+
+  @override
+  void dispose() {
+    // Clear callback when page is disposed
+    NotificationService.onNotificationChatTap = null;
+    super.dispose();
+  }
+
+  /// Navigate to a specific chat (used for deep linking from notifications)
+  void _navigateToChat(String chatId) {
+    if (!mounted) return;
+    
+    final chatsProvider = context.read<ChatsListProvider>();
+    final chat = chatsProvider.getChatById(chatId);
+    
+    if (chat == null) {
+      debugPrint('ChatListPage: Chat $chatId not found, cannot navigate');
+      // Show a snackbar or handle gracefully
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Chat not found'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
+    chatsProvider.setActiveChat(chatId);
+    chatsProvider.markChatAsRead(chatId);
+    
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ChangeNotifierProvider(
+          create: (_) => ChatProvider(
+            chatId: chat.id,
+            model: chat.model,
+            systemPrompt: chat.getEnhancedSystemPrompt(),
+            responseLength: chat.responseLength,
+            chatsListProvider: chatsProvider,
+          ),
+          child: ChatPage(chatId: chat.id),
+        ),
+      ),
+    ).then((_) {
+      // Clear active chat when returning to chat list
+      if (mounted) {
+        chatsProvider.setActiveChat(null);
+      }
+    });
+  }
 
   String _formatTime(DateTime? dateTime) {
     if (dateTime == null) return '';
@@ -45,7 +111,7 @@ class ChatListPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Traitus'),
-        automaticallyImplyLeading: !isInTabView,
+        automaticallyImplyLeading: !widget.isInTabView,
         actions: [
           IconButton(
             icon: const Icon(Icons.bookmark_outline),

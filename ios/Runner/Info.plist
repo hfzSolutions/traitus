@@ -24,6 +24,8 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
@@ -34,6 +36,8 @@
 	<string>We need access to speech recognition to convert your voice to text</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>We need access to your microphone to record your voice messages</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>This app may use location services for enhanced features and analytics through third-party services</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UIBackgroundModes</key>
@@ -56,6 +60,17 @@
 		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.hafiz.traitus</string>
+			</array>
+		</dict>
 	</array>
 </dict>
 </plist>

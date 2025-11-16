@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:traitus/providers/auth_provider.dart';
 import 'package:traitus/ui/signup_page.dart';
 import 'package:traitus/ui/forgot_password_page.dart';
+import 'package:traitus/ui/widgets/google_sign_in_button.dart';
 
 class AuthPage extends StatefulWidget {
   const AuthPage({super.key});
@@ -167,6 +168,52 @@ class _AuthPageState extends State<AuthPage> {
                                 'Sign In',
                                 style: TextStyle(fontSize: 16),
                               ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 24),
+
+                  // Divider with "OR"
+                  Row(
+                    children: [
+                      Expanded(child: Divider(thickness: 1)),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Text(
+                          'OR',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Colors.grey,
+                              ),
+                        ),
+                      ),
+                      Expanded(child: Divider(thickness: 1)),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+
+                  // Google Sign-In Button
+                  Consumer<AuthProvider>(
+                    builder: (context, authProvider, _) {
+                      return GoogleSignInButton(
+                        onPressed: () async {
+                          try {
+                            await authProvider.signInWithGoogle();
+                            // Navigation will be handled by AuthCheckPage
+                          } catch (e) {
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    e.toString().replaceAll('Exception: ', ''),
+                                  ),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                            }
+                          }
+                        },
+                        isLoading: authProvider.isLoading,
+                        text: 'Continue with Google',
                       );
                     },
                   ),
