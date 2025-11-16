@@ -77,5 +77,19 @@ class SupabaseService {
   Future<void> resetPassword(String email) async {
     await client.auth.resetPasswordForEmail(email);
   }
+
+  // Sign in with Google
+  Future<bool> signInWithGoogle() async {
+    try {
+      await client.auth.signInWithOAuth(
+        OAuthProvider.google,
+        redirectTo: 'com.hafiz.traitus://login-callback',
+        authScreenLaunchMode: LaunchMode.externalApplication,
+      );
+      return true;
+    } catch (e) {
+      rethrow;
+    }
+  }
 }
 

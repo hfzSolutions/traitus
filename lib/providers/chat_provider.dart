@@ -4,6 +4,7 @@ import 'package:traitus/models/chat_message.dart';
 import 'package:traitus/services/openrouter_api.dart';
 import 'package:traitus/services/database_service.dart';
 import 'package:traitus/services/app_config_service.dart';
+import 'package:traitus/services/activity_service.dart';
 import 'package:traitus/providers/chats_list_provider.dart';
 
 class ChatProvider extends ChangeNotifier {
@@ -361,6 +362,8 @@ class ChatProvider extends ChangeNotifier {
       if (_chatsListProvider != null) {
         _chatsListProvider.addMessageToCache(_chatId, userMessage);
       }
+      // Track user activity when sending a message
+      ActivityService().updateLastActivity();
     } catch (e) {
       // Error saving user message
     }
