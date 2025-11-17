@@ -10,13 +10,17 @@ The voice input feature allows users to speak their messages instead of typing t
 - ⚡ **Real-Time Transcription**: See your words appear in the text field as you speak
 - ✏️ **Editable**: You can edit the transcribed text before sending
 - 🔴 **Visual Feedback**: Microphone button turns red while recording
-- ⏱️ **Auto-Stop**: Automatically stops after 30 seconds or 3 seconds of silence
+- 🎯 **Hold-to-Talk Mode**: Long-press to record, release to automatically send
+- 🔄 **Continuous Use**: Hold-to-talk mode stays active for multiple messages
+- 👁️ **Smart Visibility**: Mic button hides when you start typing
 - 🌐 **Free**: Uses device's built-in speech recognition (no API costs)
 
 ## How to Use
 
+### Standard Voice Input Mode
+
 1. **Start Recording**:
-   - Tap the microphone icon (🎤) in the chat input bar
+   - Tap the microphone icon (🎤) next to the plus button in the chat input bar
    - The button will turn red to indicate recording is active
    - The text field will show "Listening..." hint
 
@@ -32,6 +36,33 @@ The voice input feature allows users to speak their messages instead of typing t
 4. **Edit and Send**:
    - Review and edit the transcribed text if needed
    - Tap the send button to send your message
+
+### Hold-to-Talk Mode
+
+1. **Switch to Hold-to-Talk**:
+   - Tap the microphone icon (🎤) to switch to hold-to-talk mode
+   - The input field will transform into a large "Hold to talk" button
+
+2. **Record Your Message**:
+   - Long-press and hold the "Hold to talk" button
+   - Speak your message while holding
+   - The button will show "Recording..." with a pulsing animation
+   - Your words will appear in real-time
+
+3. **Send Automatically**:
+   - Release the button to automatically send your message
+   - The message is sent immediately after release (no need to tap send)
+   - The hold-to-talk view stays open for your next message
+
+4. **Return to Text Input**:
+   - Tap the back arrow button (→) on the right side of the hold-to-talk button
+   - This returns you to standard text input mode
+
+### Smart Button Behavior
+
+- **Mic Button Visibility**: The mic button automatically hides when you start typing text
+- **Button Position**: Located on the right side of the input field, next to the plus/send button
+- **Smooth Animations**: All transitions use standard Material Design animations
 
 ## Technical Implementation
 
@@ -63,10 +94,12 @@ The voice input functionality is implemented in:
    ```dart
    final stt.SpeechToText _speech = stt.SpeechToText();
    bool _isAvailable = false;
+   bool _isHoldToTalkMode = false; // Toggle between text and hold-to-talk mode
    ```
 
 2. **Listening State Management**:
    - `_isListening`: Tracks if currently recording
+   - `_isHoldToTalkMode`: Tracks if hold-to-talk mode is active
    - `_baseText`: Stores confirmed transcribed text
    - `_partialText`: Stores temporary partial results
    - `_isUpdatingFromSpeech`: Prevents conflicts between speech updates and manual edits
@@ -75,6 +108,17 @@ The voice input functionality is implemented in:
    - Partial results update the text field in real-time
    - Final results are appended to the base text
    - Users can manually edit text while listening
+
+4. **Hold-to-Talk Implementation**:
+   - Uses `GestureDetector` with `onLongPressStart` and `onLongPressEnd`
+   - Automatically sends message on button release
+   - Keeps hold-to-talk mode active for continuous use
+   - Back button positioned on the right side for easy access
+
+5. **Smart Button Visibility**:
+   - Mic button uses `AnimatedSwitcher` for smooth transitions
+   - Hides when user starts typing (`hasText` is true)
+   - Shows when text field is empty and speech is available
 
 ### Configuration
 
@@ -130,14 +174,37 @@ The speech recognition is configured with:
 - No audio data is stored by the app
 - Users should review platform privacy policies (Apple/Google)
 
+## UI/UX Details
+
+### Button Positioning
+- **Mic Button**: Located on the right side of the input field, next to the plus/send button
+- **Styling**: Matches the plus button theme (circular, same background color, same border)
+- **Spacing**: 2px gap between mic and plus/send buttons for compact layout
+
+### Animations
+- **Mic Button Hide/Show**: Fade and scale animation (200ms duration)
+- **Hold-to-Talk Transition**: Smooth fade and scale transition when switching modes
+- **Back Button**: Slides in from the right with fade animation
+
+### User Experience Flow
+1. User sees mic button when input is empty
+2. User starts typing → mic button smoothly hides
+3. User clears text → mic button smoothly reappears
+4. User taps mic → switches to hold-to-talk mode
+5. User holds button → records and sees real-time transcription
+6. User releases → message automatically sends
+7. Hold-to-talk stays active → user can immediately record again
+8. User taps back arrow → returns to text input mode
+
 ## Future Enhancements
 
 Potential improvements:
 - Language selection (currently hardcoded to `en_US`)
 - Offline mode support detection
-- Voice commands for sending messages
 - Audio waveform visualization during recording
 - Multiple language support
+- Voice activity detection (auto-start/stop)
+- Noise cancellation feedback
 
 ## Related Files
 

@@ -18,6 +18,7 @@ import 'package:traitus/ui/widgets/chat_form_modal.dart';
 import 'package:traitus/ui/widgets/app_avatar.dart';
 import 'package:traitus/ui/widgets/haptic_modal.dart';
 import 'package:traitus/ui/notes_page.dart';
+import 'package:traitus/ui/chat_profile_page.dart';
 import 'package:traitus/services/notification_service.dart';
 import 'package:traitus/services/storage_service.dart';
 import 'package:traitus/services/tts_service.dart';
@@ -617,24 +618,38 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
 
     return Scaffold(
       appBar: AppBar(
-        title: Row(
-          children: [
-            // Avatar - not tappable
-            AppAvatar(
-              size: 40,
-              name: chatName,
-              imageUrl: chat?.avatarUrl,
-              isCircle: true,
-            ),
-            const SizedBox(width: 12),
-            // Chat name - not tappable
-            Expanded(
-              child: Text(
-                chatName,
-                overflow: TextOverflow.ellipsis,
+        title: InkWell(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ChatProfilePage(chatId: widget.chatId),
               ),
+            );
+          },
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            child: Row(
+              children: [
+                // Avatar
+                AppAvatar(
+                  size: 40,
+                  name: chatName,
+                  imageUrl: chat?.avatarUrl,
+                  isCircle: true,
+                ),
+                const SizedBox(width: 12),
+                // Chat name
+                Expanded(
+                  child: Text(
+                    chatName,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
         actions: [
           Consumer<ChatProvider>(
@@ -701,60 +716,66 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
         child: Column(
           children: [
             Expanded(
-              child: Consumer<ChatProvider>(
-                builder: (context, chat, _) {
-                  // Show loading indicator while messages are being loaded
-                  if (chat.isLoading) {
-                    return Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          CircularProgressIndicator(
-                            color: theme.colorScheme.primary,
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'Loading messages...',
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: theme.colorScheme.onSurface.withOpacity(0.6),
+              child: GestureDetector(
+                onTap: () {
+                  // Dismiss keyboard when tapping on the message area
+                  FocusScope.of(context).unfocus();
+                },
+                behavior: HitTestBehavior.opaque,
+                child: Consumer<ChatProvider>(
+                  builder: (context, chat, _) {
+                    // Show loading indicator while messages are being loaded
+                    if (chat.isLoading) {
+                      return Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            CircularProgressIndicator(
+                              color: theme.colorScheme.primary,
                             ),
-                          ),
-                        ],
-                      ),
-                    );
-                  }
+                            const SizedBox(height: 16),
+                            Text(
+                              'Loading messages...',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: theme.colorScheme.onSurface.withOpacity(0.6),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
 
-                  // Filter out system messages and pending messages that are no longer needed
-                  // Also exclude old empty pending messages (but keep current one if actively sending)
-                  final items = chat.messages
-                      .where((m) => m.role != ChatRole.system)
-                      .where((m) {
-                        // If pending and empty, only show if we're actively sending (it's the current message)
-                        if (m.isPending && m.content.trim().isEmpty) {
-                          return chat.isSending; // Only show if currently sending (current message)
-                        }
-                        // Show pending messages only when actively sending
-                        return !m.isPending || chat.isSending;
-                      })
-                      .toList();
+                    // Filter out system messages and pending messages that are no longer needed
+                    // Also exclude old empty pending messages (but keep current one if actively sending)
+                    final items = chat.messages
+                        .where((m) => m.role != ChatRole.system)
+                        .where((m) {
+                          // If pending and empty, only show if we're actively sending (it's the current message)
+                          if (m.isPending && m.content.trim().isEmpty) {
+                            return chat.isSending; // Only show if currently sending (current message)
+                          }
+                          // Show pending messages only when actively sending
+                          return !m.isPending || chat.isSending;
+                        })
+                        .toList();
 
-                  if (items.isEmpty) {
-                    // Get the AiChat object for category detection
-                    final aiChat = context.read<ChatsListProvider>().getChatById(widget.chatId);
-                    return _EmptyState(
-                      chatName: aiChat?.name ?? '',
-                      chatDescription: aiChat?.shortDescription ?? '',
-                      onSuggestionTap: (text) {
-                        _controller.text = text;
-                        _submit(context);
-                      },
-                    );
-                  }
+                    if (items.isEmpty) {
+                      // Get the AiChat object for category detection
+                      final aiChat = context.read<ChatsListProvider>().getChatById(widget.chatId);
+                      return _EmptyState(
+                        chatName: aiChat?.name ?? '',
+                        chatDescription: aiChat?.shortDescription ?? '',
+                        onSuggestionTap: (text) {
+                          _controller.text = text;
+                          _submit(context);
+                        },
+                      );
+                    }
 
-                  return Center(
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(maxWidth: maxWidth),
-                      child: ListView.separated(
+                    return Center(
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(maxWidth: maxWidth),
+                        child: ListView.separated(
                         controller: _scrollController,
                         reverse: true, // Standard chat behavior: show latest messages at bottom
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -810,7 +831,8 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                       ),
                     ),
                   );
-                },
+                  },
+                ),
               ),
             ),
             const Divider(height: 1),
@@ -1720,6 +1742,7 @@ class _InputBarState extends State<_InputBar> {
   final StorageService _storageService = StorageService();
   bool _isListening = false;
   bool _isAvailable = false;
+  bool _isHoldToTalkMode = false; // Toggle between text input and hold-to-talk mode
   String _baseText = '';
   String _partialText = '';
   bool _isUpdatingFromSpeech = false;
@@ -1905,31 +1928,29 @@ class _InputBarState extends State<_InputBar> {
   void _showImageSourcePicker() {
     showModalBottomSheet(
       context: context,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.camera_alt),
-              title: const Text('Take Photo'),
-              subtitle: const Text('Capture a new photo with camera'),
-              onTap: () {
-                Navigator.pop(context);
-                _pickImage(ImageSource.camera);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library),
-              title: const Text('Choose from Gallery'),
-              subtitle: const Text('Select an image from your gallery'),
-              onTap: () {
-                Navigator.pop(context);
-                _pickImage(ImageSource.gallery);
-              },
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.camera_alt),
+            title: const Text('Take Photo'),
+            subtitle: const Text('Capture a new photo with camera'),
+            onTap: () {
+              Navigator.pop(context);
+              _pickImage(ImageSource.camera);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.photo_library),
+            title: const Text('Choose from Gallery'),
+            subtitle: const Text('Select an image from your gallery'),
+            onTap: () {
+              Navigator.pop(context);
+              _pickImage(ImageSource.gallery);
+            },
+          ),
+          const SizedBox(height: 8),
+        ],
       ),
     );
   }
@@ -2021,29 +2042,28 @@ class _InputBarState extends State<_InputBar> {
   void _showInputOptions(BuildContext context) {
     showModalBottomSheet(
       context: context,
-      builder: (sheetContext) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.only(bottom: 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.image),
-                title: const Text('Add Image'),
-                subtitle: const Text('Take photo or choose from gallery'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  _showImageSourcePicker();
-                },
-              ),
-            ],
-          ),
+      builder: (sheetContext) => Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.image),
+              title: const Text('Add Image'),
+              subtitle: const Text('Take photo or choose from gallery'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _showImageSourcePicker();
+              },
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Future<void> _toggleListening() async {
+  /// Toggle between text input mode and hold-to-talk mode
+  Future<void> _toggleHoldToTalkMode() async {
     if (!_isAvailable) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -2054,72 +2074,110 @@ class _InputBarState extends State<_InputBar> {
       return;
     }
 
+    // Stop any active recording when toggling mode
     if (_isListening) {
       await _speech.stop();
       setState(() {
         _isListening = false;
         _partialText = '';
       });
-    } else {
-      setState(() {
-        _isListening = true;
-        _baseText = widget.controller.text;
-        _partialText = '';
-      });
-      
-      try {
-        await _speech.listen(
-          onResult: (result) {
-            // Don't update if we're no longer listening (e.g., message was sent)
-            if (!_isListening) return;
-            
-            setState(() {
-              _isUpdatingFromSpeech = true;
-              if (result.finalResult) {
-                // Final result: append to base text
-                final newText = _baseText.isEmpty
-                    ? result.recognizedWords
-                    : '$_baseText ${result.recognizedWords}';
-                widget.controller.text = newText;
-                _baseText = newText;
-                _partialText = '';
-              } else {
-                // Partial result: show base text + partial text
-                _partialText = result.recognizedWords;
-                final displayText = _baseText.isEmpty
-                    ? _partialText
-                    : '$_baseText $_partialText';
-                widget.controller.text = displayText;
-              }
-              _isUpdatingFromSpeech = false;
-            });
-          },
-          listenFor: const Duration(seconds: 30),
-          pauseFor: const Duration(seconds: 3),
-          localeId: 'en_US',
-          cancelOnError: true,
-          partialResults: true,
-        );
-      } catch (e) {
-        debugPrint('Error starting speech recognition: $e');
-        if (mounted) {
+    }
+
+    // Toggle the mode
+    setState(() {
+      _isHoldToTalkMode = !_isHoldToTalkMode;
+    });
+  }
+
+  /// Start recording when user starts holding the button
+  Future<void> _startHoldToTalk() async {
+    if (!_isAvailable || _isListening) return;
+
+    // Provide haptic feedback when recording starts
+    HapticFeedback.mediumImpact();
+
+    setState(() {
+      _isListening = true;
+      _baseText = widget.controller.text;
+      _partialText = '';
+    });
+    
+    try {
+      await _speech.listen(
+        onResult: (result) {
+          // Don't update if we're no longer listening
+          if (!_isListening) return;
+          
           setState(() {
-            _isListening = false;
-            _partialText = '';
+            _isUpdatingFromSpeech = true;
+            if (result.finalResult) {
+              // Final result: append to base text
+              final newText = _baseText.isEmpty
+                  ? result.recognizedWords
+                  : '$_baseText ${result.recognizedWords}';
+              widget.controller.text = newText;
+              _baseText = newText;
+              _partialText = '';
+            } else {
+              // Partial result: show base text + partial text
+              _partialText = result.recognizedWords;
+              final displayText = _baseText.isEmpty
+                  ? _partialText
+                  : '$_baseText $_partialText';
+              widget.controller.text = displayText;
+            }
+            _isUpdatingFromSpeech = false;
           });
-          final errorString = e.toString().toLowerCase();
-          if (errorString.contains('permission') || errorString.contains('denied') || errorString.contains('microphone')) {
-            await NotificationService.showEnableMicrophoneDialog(context);
-          } else {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Failed to start voice input: ${e.toString()}'),
-                duration: const Duration(seconds: 3),
-              ),
-            );
-          }
+        },
+        listenFor: const Duration(seconds: 60), // Longer duration for hold-to-talk
+        pauseFor: const Duration(seconds: 3),
+        localeId: 'en_US',
+        cancelOnError: true,
+        partialResults: true,
+      );
+    } catch (e) {
+      debugPrint('Error starting speech recognition: $e');
+      if (mounted) {
+        setState(() {
+          _isListening = false;
+          _partialText = '';
+        });
+        final errorString = e.toString().toLowerCase();
+        if (errorString.contains('permission') || errorString.contains('denied') || errorString.contains('microphone')) {
+          await NotificationService.showEnableMicrophoneDialog(context);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to start voice input: ${e.toString()}'),
+              duration: const Duration(seconds: 3),
+            ),
+          );
         }
       }
+    }
+  }
+
+  /// Stop recording when user releases the button
+  Future<void> _stopHoldToTalk() async {
+    if (!_isListening) return;
+    
+    // Provide haptic feedback when recording stops
+    HapticFeedback.lightImpact();
+    
+    await _speech.stop();
+    setState(() {
+      _isListening = false;
+      _partialText = '';
+    });
+    
+    // Automatically send the message if there's transcribed text
+    // Keep the hold-to-talk mode active so user can continue using it
+    final text = widget.controller.text.trim();
+    if (text.isNotEmpty) {
+      // Small delay to ensure speech recognition has finished processing
+      await Future.delayed(const Duration(milliseconds: 100));
+      // Send the message automatically
+      await _handleSend();
     }
   }
 
@@ -2136,6 +2194,109 @@ class _InputBarState extends State<_InputBar> {
     }
   }
 
+  /// Build the hold-to-talk button widget
+  Widget _buildHoldToTalkButton(ThemeData theme, bool isSending) {
+    return Container(
+      key: const ValueKey('hold-to-talk-button'),
+      child: GestureDetector(
+      // Long press to start recording
+      onLongPressStart: (_) => _startHoldToTalk(),
+      onLongPressEnd: (_) => _stopHoldToTalk(),
+      onLongPressCancel: () => _stopHoldToTalk(),
+      child: Container(
+        height: 56,
+        decoration: BoxDecoration(
+          color: _isListening
+              ? theme.colorScheme.errorContainer
+              : theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(
+            color: _isListening
+                ? theme.colorScheme.error
+                : theme.colorScheme.outline.withOpacity(0.2),
+            width: _isListening ? 2 : 1,
+          ),
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // Pulsing animation when recording
+            if (_isListening)
+              _PulsingCircle(
+                color: theme.colorScheme.error,
+              ),
+            // Main button content
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  _isListening ? Icons.mic : Icons.mic_none,
+                  color: _isListening
+                      ? theme.colorScheme.onErrorContainer
+                      : theme.colorScheme.onSurface.withOpacity(0.7),
+                  size: 24,
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  _isListening ? 'Recording...' : 'Hold to talk',
+                  style: theme.textTheme.bodyLarge?.copyWith(
+                    fontSize: 16,
+                    color: _isListening
+                        ? theme.colorScheme.onErrorContainer
+                        : theme.colorScheme.onSurface.withOpacity(0.7),
+                    fontWeight: _isListening ? FontWeight.w600 : FontWeight.normal,
+                  ),
+                ),
+              ],
+            ),
+            // Back button on the right (only show when not recording)
+            if (!_isListening)
+              Positioned(
+                right: 8,
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  switchInCurve: Curves.easeOut,
+                  switchOutCurve: Curves.easeIn,
+                  transitionBuilder: (child, animation) {
+                    return FadeTransition(
+                      opacity: animation,
+                      child: SlideTransition(
+                        position: Tween<Offset>(
+                          begin: const Offset(0.3, 0),
+                          end: Offset.zero,
+                        ).animate(CurvedAnimation(
+                          parent: animation,
+                          curve: Curves.easeOut,
+                        )),
+                        child: child,
+                      ),
+                    );
+                  },
+                  child: IconButton(
+                    key: const ValueKey('back-button'),
+                    tooltip: 'Back to text input',
+                    onPressed: () {
+                      setState(() {
+                        _isHoldToTalkMode = false;
+                      });
+                    },
+                    icon: const Icon(Icons.arrow_back),
+                    style: IconButton.styleFrom(
+                      backgroundColor: theme.colorScheme.surfaceContainerHigh,
+                      shape: const CircleBorder(),
+                      fixedSize: const Size(44, 44),
+                      foregroundColor: theme.colorScheme.onSurface.withOpacity(0.7),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -2149,66 +2310,6 @@ class _InputBarState extends State<_InputBar> {
     final hasContent = hasText || hasUploadedImages;
     final canSend = hasContent && !hasUploadingImages && !hasFailedUploads;
 
-    // Build prefix icons (action buttons on the left)
-    // Options button: only show when there's no text
-    // Mic button: always show when available (especially when listening)
-    // Image button: always show (validation happens on click)
-    final prefixIconsWidget = (!hasText || _isAvailable)
-        ? Padding(
-            padding: const EdgeInsets.only(left: 8, right: 8),
-            child: SizedBox(
-              height: 24,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // Image button - always show (validation on click)
-                  IconButton(
-                    tooltip: _attachedImages.length >= _maxImagesPerMessage
-                        ? 'Maximum $_maxImagesPerMessage images reached'
-                        : 'Attach image (${_attachedImages.length}/$_maxImagesPerMessage)',
-                    icon: const Icon(Icons.image_outlined),
-                    onPressed: isSending ? null : _showImageSourcePicker, // Show camera/gallery options
-                    color: _attachedImages.length >= _maxImagesPerMessage
-                        ? theme.colorScheme.onSurface.withOpacity(0.3)
-                        : theme.colorScheme.onSurface.withOpacity(0.7),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                    iconSize: 22,
-                  ),
-                  if (!hasText || _isAvailable) const SizedBox(width: 8),
-                  // Options button - only show when there's no text
-                  if (!hasText) ...[
-                    IconButton(
-                      tooltip: 'Options',
-                      icon: const Icon(Icons.add_circle_outline),
-                      onPressed: isSending ? null : () => _showInputOptions(context),
-                      color: theme.colorScheme.onSurface.withOpacity(0.7),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                      iconSize: 22,
-                    ),
-                  ],
-                  // Mic button - always show when available
-                  if (_isAvailable) ...[
-                    const SizedBox(width: 8),
-                    IconButton(
-                      tooltip: _isListening ? 'Stop recording' : 'Start voice input',
-                      icon: Icon(_isListening ? Icons.mic : Icons.mic_none),
-                      onPressed: isSending ? null : _toggleListening,
-                      color: _isListening
-                          ? theme.colorScheme.error
-                          : theme.colorScheme.onSurface.withOpacity(0.7),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                      iconSize: 22,
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          )
-        : null;
 
     return Center(
       child: ConstrainedBox(
@@ -2403,11 +2504,30 @@ class _InputBarState extends State<_InputBar> {
                     },
                   ),
                 ),
-              // Text input field
-              AnimatedSize(
+              // Text input field or hold-to-talk button
+              AnimatedSwitcher(
                 duration: const Duration(milliseconds: 200),
-                curve: Curves.easeInOut,
-                child: TextField(
+                switchInCurve: Curves.easeOut,
+                switchOutCurve: Curves.easeIn,
+                transitionBuilder: (child, animation) {
+                  return FadeTransition(
+                    opacity: animation,
+                    child: ScaleTransition(
+                      scale: Tween<double>(
+                        begin: 0.95,
+                        end: 1.0,
+                      ).animate(CurvedAnimation(
+                        parent: animation,
+                        curve: Curves.easeOut,
+                      )),
+                      child: child,
+                    ),
+                  );
+                },
+                child: _isHoldToTalkMode
+                    ? _buildHoldToTalkButton(theme, isSending)
+                    : TextField(
+                key: const ValueKey('text-input'),
                 controller: widget.controller,
                 minLines: 1,
                 maxLines: 6,
@@ -2456,76 +2576,133 @@ class _InputBarState extends State<_InputBar> {
                   width: 2,
                 ),
               ),
-              contentPadding: EdgeInsets.fromLTRB(
-                prefixIconsWidget != null ? 8 : 20,
+              contentPadding: const EdgeInsets.fromLTRB(
+                12,
                 16,
                 20,
                 16,
               ),
-              prefixIcon: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 200),
-                switchInCurve: Curves.easeOut,
-                switchOutCurve: Curves.easeIn,
-                transitionBuilder: (child, animation) {
-                  return FadeTransition(
-                    opacity: animation,
-                    child: SlideTransition(
-                      position: Tween<Offset>(
-                        begin: const Offset(-0.2, 0),
-                        end: Offset.zero,
-                      ).animate(CurvedAnimation(
-                        parent: animation,
-                        curve: Curves.easeOut,
-                      )),
-                      child: child,
-                    ),
-                  );
-                },
-                child: prefixIconsWidget != null
-                    ? SizedBox(
-                        key: const ValueKey('prefix-icons'),
-                        child: prefixIconsWidget,
-                      )
-                    : const SizedBox.shrink(key: ValueKey('empty')),
-              ),
-              prefixIconConstraints: const BoxConstraints(
-                minWidth: 0,
-                minHeight: 0,
-              ),
               suffixIcon: Padding(
                 padding: const EdgeInsets.only(right: 4),
-                child: isSending
-                    ? IconButton(
-                        tooltip: 'Stop generating',
-                        onPressed: widget.onStop,
-                        icon: Icon(
-                          Icons.stop_circle_outlined,
-                          color: theme.colorScheme.error,
-                        ),
-                        style: IconButton.styleFrom(
-                          backgroundColor: theme.colorScheme.errorContainer,
-                        ),
-                      )
-                    : IconButton(
-                        tooltip: hasUploadingImages
-                            ? 'Waiting for images to upload...'
-                            : hasFailedUploads
-                                ? 'Some images failed to upload'
-                                : 'Send message',
-                        onPressed: canSend ? _handleSend : null,
-                        icon: Icon(
-                          Icons.arrow_upward_rounded,
-                          color: canSend
-                              ? theme.colorScheme.onPrimary
-                              : theme.colorScheme.onSurface.withOpacity(0.3),
-                        ),
-                        style: IconButton.styleFrom(
-                          backgroundColor: canSend
-                              ? theme.colorScheme.primary
-                              : theme.colorScheme.surfaceContainerHighest,
-                          shape: const CircleBorder(),
-                        ),
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  switchInCurve: Curves.easeOut,
+                  switchOutCurve: Curves.easeIn,
+                  transitionBuilder: (child, animation) {
+                    return FadeTransition(
+                      opacity: animation,
+                      child: ScaleTransition(
+                        scale: animation,
+                        child: child,
                       ),
+                    );
+                  },
+                  child: isSending
+                      ? IconButton(
+                          key: const ValueKey('stop-button'),
+                          tooltip: 'Stop generating',
+                          onPressed: widget.onStop,
+                          icon: Icon(
+                            Icons.stop_circle_outlined,
+                            color: theme.colorScheme.error,
+                          ),
+                          style: IconButton.styleFrom(
+                            backgroundColor: theme.colorScheme.errorContainer,
+                          ),
+                        )
+                      : Row(
+                          key: const ValueKey('action-buttons-row'),
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // Mic button - toggle between text and hold-to-talk mode
+                            // Hide when user starts typing
+                            AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 200),
+                              switchInCurve: Curves.easeOut,
+                              switchOutCurve: Curves.easeIn,
+                              transitionBuilder: (child, animation) {
+                                return FadeTransition(
+                                  opacity: animation,
+                                  child: ScaleTransition(
+                                    scale: Tween<double>(
+                                      begin: 0.8,
+                                      end: 1.0,
+                                    ).animate(CurvedAnimation(
+                                      parent: animation,
+                                      curve: Curves.easeOut,
+                                    )),
+                                    child: child,
+                                  ),
+                                );
+                              },
+                              child: (_isAvailable && !hasText)
+                                  ? Padding(
+                                      key: const ValueKey('mic-button'),
+                                      padding: const EdgeInsets.only(right: 2),
+                                      child: IconButton(
+                                        tooltip: _isHoldToTalkMode 
+                                            ? 'Switch to text input' 
+                                            : 'Switch to voice input',
+                                        onPressed: _toggleHoldToTalkMode,
+                                        icon: Icon(_isHoldToTalkMode ? Icons.keyboard : Icons.mic_none),
+                                        style: IconButton.styleFrom(
+                                          backgroundColor:
+                                              theme.colorScheme.surfaceContainerHigh,
+                                          shape: const CircleBorder(),
+                                          fixedSize: const Size(44, 44),
+                                          side: BorderSide(
+                                            color: theme.colorScheme.outlineVariant.withOpacity(0.4),
+                                            width: 1,
+                                          ),
+                                          foregroundColor: _isHoldToTalkMode
+                                              ? theme.colorScheme.primary
+                                              : theme.colorScheme.onSurface.withOpacity(0.7),
+                                        ),
+                                      ),
+                                    )
+                                  : const SizedBox.shrink(key: ValueKey('mic-button-hidden')),
+                            ),
+                            // Send or Plus button
+                            canSend
+                                ? IconButton(
+                                    key: const ValueKey('send-button'),
+                                    tooltip: hasUploadingImages
+                                        ? 'Waiting for images to upload...'
+                                        : hasFailedUploads
+                                            ? 'Some images failed to upload'
+                                            : 'Send message',
+                                    onPressed: _handleSend,
+                                    icon: Icon(
+                                      Icons.arrow_upward_rounded,
+                                      color: theme.colorScheme.onPrimary,
+                                    ),
+                                    style: IconButton.styleFrom(
+                                      backgroundColor: theme.colorScheme.primary,
+                                      shape: const CircleBorder(),
+                                      fixedSize: const Size(44, 44),
+                                    ),
+                                  )
+                                : IconButton(
+                                    key: const ValueKey('plus-button'),
+                                    tooltip: 'More actions',
+                                    onPressed: () => _showInputOptions(context),
+                                    icon: Icon(Icons.add),
+                                    style: IconButton.styleFrom(
+                                      backgroundColor:
+                                          theme.colorScheme.surfaceContainerHigh,
+                                      shape: const CircleBorder(),
+                                      fixedSize: const Size(44, 44),
+                                      side: BorderSide(
+                                        color: theme.colorScheme.outlineVariant.withOpacity(0.4),
+                                        width: 1,
+                                      ),
+                                      foregroundColor:
+                                          theme.colorScheme.onSurface.withOpacity(0.7),
+                                    ),
+                                  ),
+                          ],
+                        ),
+                ),
               ),
               suffixIconConstraints: const BoxConstraints(
                 minWidth: 40,
@@ -2596,17 +2773,15 @@ class _SaveNoteBottomSheetState extends State<_SaveNoteBottomSheet> {
       padding: EdgeInsets.only(
         bottom: mediaQuery.viewInsets.bottom,
       ),
-      child: SafeArea(
-        top: false,
-        child: Container(
-          constraints: BoxConstraints(
-            maxHeight: mediaQuery.size.height * 0.85,
-          ),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-          ),
-          child: Consumer<NotesProvider>(
+      child: Container(
+        constraints: BoxConstraints(
+          maxHeight: mediaQuery.size.height * 0.85,
+        ),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Consumer<NotesProvider>(
             builder: (context, notesProvider, _) {
               // Use notes from provider (always up-to-date) instead of widget parameter
               final notes = notesProvider.notes;
@@ -2906,7 +3081,64 @@ class _SaveNoteBottomSheetState extends State<_SaveNoteBottomSheet> {
             },
           ),
         ),
-      ),
+    );
+  }
+}
+
+/// A pulsing circle animation widget for visual feedback during recording
+class _PulsingCircle extends StatefulWidget {
+  const _PulsingCircle({
+    required this.color,
+  });
+
+  final Color color;
+
+  @override
+  State<_PulsingCircle> createState() => _PulsingCircleState();
+}
+
+class _PulsingCircleState extends State<_PulsingCircle>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 1000),
+      vsync: this,
+    )..repeat(reverse: true);
+    
+    _animation = Tween<double>(
+      begin: 0.6,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeInOut,
+    ));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _animation,
+      builder: (context, child) {
+        return Container(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: widget.color.withOpacity(0.15 * _animation.value),
+          ),
+          width: 80 * _animation.value,
+          height: 80 * _animation.value,
+        );
+      },
     );
   }
 }

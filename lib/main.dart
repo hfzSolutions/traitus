@@ -102,7 +102,6 @@ class AuthCheckPage extends StatefulWidget {
 
 class _AuthCheckPageState extends State<AuthCheckPage> with WidgetsBindingObserver {
   VersionCheckStatus? _versionStatus;
-  bool _isCheckingVersion = true;
   bool _hasShownOptionalUpdate = false;
 
   @override
@@ -139,15 +138,12 @@ class _AuthCheckPageState extends State<AuthCheckPage> with WidgetsBindingObserv
   }
 
   Future<void> _checkVersion() async {
-    setState(() => _isCheckingVersion = true);
-    
     try {
       final status = await VersionControlService().checkVersion();
       
       if (mounted) {
         setState(() {
           _versionStatus = status;
-          _isCheckingVersion = false;
         });
 
         // Show optional update dialog if needed (only once per session)
@@ -166,7 +162,6 @@ class _AuthCheckPageState extends State<AuthCheckPage> with WidgetsBindingObserv
           _versionStatus = VersionCheckStatus(
             result: VersionCheckResult.upToDate,
           );
-          _isCheckingVersion = false;
         });
       }
     }
@@ -188,52 +183,45 @@ class _AuthCheckPageState extends State<AuthCheckPage> with WidgetsBindingObserv
 
   @override
   Widget build(BuildContext context) {
-    // Still checking version
-    if (_isCheckingVersion) {
-      return const _LoadingScreen(message: 'Checking for updates...');
-    }
-
-    // Handle version check results
-    if (_versionStatus != null) {
-      // Force update or maintenance mode - block the app
-      if (_versionStatus!.needsUpdate || _versionStatus!.inMaintenance) {
-        return UpdateRequiredPage(
-          status: _versionStatus!,
-          onCheckAgain: _checkVersion,
-        );
-      }
-    }
-
-    // Version check passed, proceed with normal auth flow
-    return Consumer<AuthProvider>(
+    final content = Consumer<AuthProvider>(
       builder: (context, authProvider, _) {
-        // Show loading screen while initializing (fetching user profile)
         if (authProvider.isInitializing) {
           return const _LoadingScreen();
         }
-        
-        // Not authenticated - show auth page
+
         if (!authProvider.isAuthenticated) {
           return const AuthPage();
         }
-        
-        // Check if user needs to complete onboarding
+
         if (authProvider.needsOnboarding) {
           return const OnboardingPage();
         }
-        
-        // All good - show home page
+
         return const HomePage();
       },
+    );
+
+    final shouldBlockForUpdate = _versionStatus != null &&
+        (_versionStatus!.needsUpdate || _versionStatus!.inMaintenance);
+
+    return Stack(
+      children: [
+        content,
+        if (shouldBlockForUpdate)
+          Positioned.fill(
+            child: UpdateRequiredPage(
+              status: _versionStatus!,
+              onCheckAgain: _checkVersion,
+            ),
+          ),
+      ],
     );
   }
 }
 
 /// Loading/Splash screen shown while checking auth state
 class _LoadingScreen extends StatelessWidget {
-  final String? message;
-  
-  const _LoadingScreen({this.message});
+  const _LoadingScreen();
 
   @override
   Widget build(BuildContext context) {
@@ -242,59 +230,12 @@ class _LoadingScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: theme.colorScheme.surface,
       body: SafeArea(
-        child: SizedBox(
-          width: double.infinity,
-          height: double.infinity,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              // Spacer to push logo to center
-              const Spacer(flex: 1),
-              // App logo (transparent version for splash screen) - centered
-              Image.asset(
-                'assets/logo.png',
-                width: 120,
-                height: 120,
-                fit: BoxFit.contain,
-              ),
-              // Spacer to push text to bottom
-              const Spacer(flex: 1),
-              // App name at the bottom
-              Padding(
-                padding: const EdgeInsets.only(bottom: 32),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Traitus',
-                      style: theme.textTheme.headlineMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: theme.colorScheme.primary,
-                      ),
-                    ),
-                    if (message != null) ...[
-                      const SizedBox(height: 12),
-                      Text(
-                        message!,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurface.withOpacity(0.6),
-                        ),
-                      ),
-                    ] else ...[
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: theme.colorScheme.primary.withOpacity(0.6),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ],
+        child: Center(
+          child: Image.asset(
+            'assets/logo.png',
+            width: 120,
+            height: 120,
+            fit: BoxFit.contain,
           ),
         ),
       ),

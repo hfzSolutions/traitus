@@ -520,40 +520,42 @@ class OpenRouterApi {
     return results;
   }
 
-  /// Generate a single AI chat configuration from a user's natural language description.
+  /// Generate multiple AI chat configuration variations from a user's natural language description.
   ///
-  /// Returns a map with: name, shortDescription, systemPrompt, and inferred preference.
-  /// If generation fails, returns null and caller should fall back to manual input.
-  Future<Map<String, dynamic>?> generateChatFromDescription({
+  /// Returns a list of maps, each with: name, shortDescription, systemPrompt, and inferred preference.
+  /// If generation fails, returns an empty list and caller should fall back to manual input.
+  Future<List<Map<String, dynamic>>> generateChatFromDescription({
     required String userDescription,
     String? languageCode,
+    int variationCount = 3,
   }) async {
     if (userDescription.trim().isEmpty) {
-      return null;
+      return [];
     }
 
     final system = {
       'role': 'system',
       'content':
           'You are a helpful assistant that creates AI chat configurations from user descriptions. '
-          'Design a chat-centric AI assistant for frequent, everyday use in a messaging-only app. '
-          'It must be productive, positive, and broadly helpful through conversation (coaching, Q&A, brainstorming, planning, tutoring, reflection). '
-          'It should NOT require executing external tasks, automations, scripts, device control, or account access—only dialogue. '
+          'Design chat-centric AI assistants for frequent, everyday use in a messaging-only app. '
+          'They must be productive, positive, and broadly helpful through conversation (coaching, Q&A, brainstorming, planning, tutoring, reflection). '
+          'They should NOT require executing external tasks, automations, scripts, device control, or account access—only dialogue. '
           'Avoid novelty-only, unsafe, harmful, explicit, illegal, or negative themes. '
-          'Return ONLY a strict JSON object. No prose. Schema: '
+          'Return ONLY a strict JSON array of $variationCount different variations. No prose. Each item in the array must match this schema: '
           '{"name": string (human-friendly, 2-5 words), '
           ' "shortDescription": string (concise, <= 80 chars, user-facing value proposition), '
           ' "systemPrompt": detailed string (2-6 sentences) defining role, scope, constraints, and helpful behavior suitable as an AI system message, '
           ' "preference": string (one of: coding, creative, research, productivity, learning, business) - choose the best match}. '
           'Do NOT include any extra fields. '
-          'Make the name human-friendly and clear. shortDescription must be concise and explain what the AI helps with. '
+          'Make each variation unique with different approaches, tones, or focuses while still matching the user description. '
+          'Make the names human-friendly and clear. shortDescription must be concise and explain what the AI helps with. '
           'systemPrompt must be actionable, specific, and suitable as an AI system message. '
-          'Localize name and shortDescription in the target language if provided; systemPrompt may be localized too.'
+          'Localize names and shortDescriptions in the target language if provided; systemPrompts may be localized too.'
     };
 
     final userData = <String, dynamic>{
       'user_description': userDescription.trim(),
-      'instruction': 'Create an AI assistant configuration based on the user_description. Return a JSON object matching the schema exactly.',
+      'instruction': 'Create $variationCount different AI assistant configuration variations based on the user_description. Return a JSON array with $variationCount items, each matching the schema exactly. Make each variation unique with different approaches, tones, or focuses.',
     };
     if (languageCode != null && languageCode.isNotEmpty) {
       userData['language_code'] = languageCode;
@@ -569,7 +571,7 @@ class OpenRouterApi {
       final content = await createChatCompletion(
         messages: [system, user],
         model: _onboardingModel,
-        temperature: 0.7,
+        temperature: 0.8, // Slightly higher temperature for more variation
       );
 
       // Strip markdown code block markers if present (```json ... ```)
@@ -589,22 +591,47 @@ class OpenRouterApi {
         jsonContent = jsonContent.trim();
       }
 
-      // Try to parse JSON object
-      Map<String, dynamic>? decoded;
+      // Try to parse JSON array
+      List<dynamic> decodedArray;
       try {
-        decoded = jsonDecode(jsonContent) as Map<String, dynamic>?;
+        final decoded = jsonDecode(jsonContent);
+        if (decoded is List) {
+          decodedArray = decoded;
+        } else if (decoded is Map) {
+          // Fallback: if single object returned, wrap it in array
+          decodedArray = [decoded];
+        } else {
+          return [];
+        }
       } catch (parseError) {
-        return null;
+        return [];
       }
       
-      if (decoded != null) {
-        final name = (decoded['name'] ?? '').toString().trim();
-        final shortDescription = (decoded['shortDescription'] ?? decoded['description'] ?? '').toString().trim();
-        final systemPrompt = (decoded['systemPrompt'] ?? decoded['description'] ?? '').toString().trim();
-        final preference = (decoded['preference'] ?? '').toString().trim().toLowerCase();
+      if (decodedArray.isEmpty) {
+        return [];
+      }
+
+      // Attach model - uses default_model from app_config table
+      String model;
+      try {
+        model = AppConfigService.instance.getCachedDefaultModel();
+      } catch (e) {
+        // Fallback to DefaultAIConfig if cache not available (shouldn't happen if initialized)
+        model = DefaultAIConfig.getModel();
+      }
+
+      final List<Map<String, dynamic>> validConfigs = [];
+
+      for (final item in decodedArray) {
+        if (item is! Map<String, dynamic>) continue;
+
+        final name = (item['name'] ?? '').toString().trim();
+        final shortDescription = (item['shortDescription'] ?? item['description'] ?? '').toString().trim();
+        final systemPrompt = (item['systemPrompt'] ?? item['description'] ?? '').toString().trim();
+        final preference = (item['preference'] ?? '').toString().trim().toLowerCase();
 
         if (name.isEmpty || shortDescription.isEmpty || systemPrompt.isEmpty) {
-          return null;
+          continue;
         }
 
         // Validate preference
@@ -621,14 +648,14 @@ class OpenRouterApi {
         ];
         bool containsBanned = banned.any((w) => lowerName.contains(w) || lowerDesc.contains(w));
         if (containsBanned) {
-          return null;
+          continue;
         }
 
         // Discourage novelty and external-action personas
         const novelty = ['joke', 'meme', 'pickup line', 'fortune', 'horoscope'];
         bool looksNovelty = novelty.any((w) => lowerName.contains(w) || lowerDesc.contains(w));
         if (looksNovelty) {
-          return null;
+          continue;
         }
 
         const externalAction = [
@@ -638,31 +665,22 @@ class OpenRouterApi {
         ];
         bool looksExternal = externalAction.any((w) => lowerName.contains(w) || lowerDesc.contains(w));
         if (looksExternal) {
-          return null;
+          continue;
         }
 
-        // Attach model - uses default_model from app_config table
-        String model;
-        try {
-          model = AppConfigService.instance.getCachedDefaultModel();
-        } catch (e) {
-          // Fallback to DefaultAIConfig if cache not available (shouldn't happen if initialized)
-          model = DefaultAIConfig.getModel();
-        }
-
-        return {
+        validConfigs.add({
           'name': name,
           'shortDescription': shortDescription,
           'systemPrompt': systemPrompt,
           'preference': validPreference,
           'model': model,
-        };
-      } else {
-        return null;
+        });
       }
+
+      return validConfigs;
     } catch (e) {
-      // If parsing fails, return null - caller should fall back to manual input
-      return null;
+      // If parsing fails, return empty list - caller should fall back to manual input
+      return [];
     }
   }
 

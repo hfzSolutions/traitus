@@ -136,7 +136,7 @@ flutter run
 ```
 
 2. Create a new chat:
-   - Tap "New AI Chat"
+   - Tap "Create"
    - Tap on the avatar circle
    - Select an image from your gallery
    - Complete the form and create

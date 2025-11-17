@@ -388,29 +388,27 @@ class _OnboardingPageState extends State<OnboardingPage>
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: Icon(Icons.photo_camera_rounded, color: theme.colorScheme.primary),
-                title: const Text('Take Photo'),
-                onTap: () async {
-                  Navigator.of(context).pop();
-                  await _pickImage(ImageSource.camera);
-                },
-              ),
-              ListTile(
-                leading: Icon(Icons.photo_library_rounded, color: theme.colorScheme.primary),
-                title: const Text('Choose from Gallery'),
-                onTap: () async {
-                  Navigator.of(context).pop();
-                  await _pickImage(ImageSource.gallery);
-                },
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(Icons.photo_camera_rounded, color: theme.colorScheme.primary),
+              title: const Text('Take Photo'),
+              onTap: () async {
+                Navigator.of(context).pop();
+                await _pickImage(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.photo_library_rounded, color: theme.colorScheme.primary),
+              title: const Text('Choose from Gallery'),
+              onTap: () async {
+                Navigator.of(context).pop();
+                await _pickImage(ImageSource.gallery);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
         );
       },
     );
@@ -1127,44 +1125,41 @@ class _OnboardingPageState extends State<OnboardingPage>
               ),
             ],
           ),
-          child: SafeArea(
-            top: false,
-            child: Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _changeStep(0),
-                    icon: const Icon(Icons.arrow_back_rounded),
-                    label: const Text('Back'),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+          child: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _changeStep(0),
+                  icon: const Icon(Icons.arrow_back_rounded),
+                  label: const Text('Back'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: () {
-                      HapticFeedback.selectionClick();
-                      if (_formKey.currentState!.validate()) {
-                        _changeStep(2);
-                      }
-                    },
-                    icon: const Icon(Icons.arrow_forward_rounded),
-                    label: const Text('Next'),
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: () {
+                    HapticFeedback.selectionClick();
+                    if (_formKey.currentState!.validate()) {
+                      _changeStep(2);
+                    }
+                  },
+                  icon: const Icon(Icons.arrow_forward_rounded),
+                  label: const Text('Next'),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ],
@@ -1391,63 +1386,60 @@ class _OnboardingPageState extends State<OnboardingPage>
               ),
             ],
           ),
-          child: SafeArea(
-            top: false,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () => _changeStep(1),
-                        icon: const Icon(Icons.arrow_back_rounded),
-                        label: const Text('Back'),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _changeStep(1),
+                      icon: const Icon(Icons.arrow_back_rounded),
+                      label: const Text('Back'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
                         ),
                       ),
                     ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed: (_selectedPreferences.where((p) => p != 'others').isEmpty && _customInterests.isEmpty)
-                            ? null
-                            : () {
-                                HapticFeedback.selectionClick();
-                                _changeStep(3);
-                              },
-                        icon: const Icon(Icons.arrow_forward_rounded),
-                        label: const Text('Next'),
-                        style: FilledButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                GestureDetector(
-                  onTap: () {
-                    HapticFeedback.selectionClick();
-                    _skipOnboarding();
-                  },
-                  child: Text(
-                    'Skip personalization',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          decoration: TextDecoration.underline,
-                        ),
                   ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: (_selectedPreferences.where((p) => p != 'others').isEmpty && _customInterests.isEmpty)
+                          ? null
+                          : () {
+                              HapticFeedback.selectionClick();
+                              _changeStep(3);
+                            },
+                      icon: const Icon(Icons.arrow_forward_rounded),
+                      label: const Text('Next'),
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              GestureDetector(
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  _skipOnboarding();
+                },
+                child: Text(
+                  'Skip personalization',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        decoration: TextDecoration.underline,
+                      ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ],
@@ -1591,44 +1583,41 @@ class _OnboardingPageState extends State<OnboardingPage>
               ),
             ],
           ),
-          child: SafeArea(
-            top: false,
-            child: Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _changeStep(2),
-                    icon: const Icon(Icons.arrow_back_rounded),
-                    label: const Text('Back'),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+          child: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _changeStep(2),
+                  icon: const Icon(Icons.arrow_back_rounded),
+                  label: const Text('Back'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: (_experienceLevel == null || _useContext == null)
-                        ? null
-                        : () {
-                            HapticFeedback.selectionClick();
-                            _changeStep(4);
-                          },
-                    icon: const Icon(Icons.arrow_forward_rounded),
-                    label: const Text('Next'),
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: (_experienceLevel == null || _useContext == null)
+                      ? null
+                      : () {
+                          HapticFeedback.selectionClick();
+                          _changeStep(4);
+                        },
+                  icon: const Icon(Icons.arrow_forward_rounded),
+                  label: const Text('Next'),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ],
@@ -1920,63 +1909,60 @@ class _OnboardingPageState extends State<OnboardingPage>
               ),
             ],
           ),
-          child: SafeArea(
-            top: false,
-            child: Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _isLoading ? null : () => _changeStep(3),
-                    icon: const Icon(Icons.arrow_back_rounded),
-                    label: const Text('Back'),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+          child: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _isLoading ? null : () => _changeStep(3),
+                  icon: const Icon(Icons.arrow_back_rounded),
+                  label: const Text('Back'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: (_isLoading || _isRecommending || (_selectedAIChats.isEmpty && recommendedChats.isNotEmpty))
-                        ? null
-                        : () {
-                            HapticFeedback.mediumImpact();
-                            _completeOnboarding();
-                          },
-                    icon: _isLoading
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Icon(Icons.check_rounded),
-                    label: Text(
-                      _isLoading
-                          ? 'Setting up...'
-                          : _isRecommending
-                              ? 'Finding...'
-                              : (_selectedAIChats.isEmpty && recommendedChats.isNotEmpty)
-                                  ? 'Select at least one'
-                                  : (_selectedAIChats.isEmpty && recommendedChats.isEmpty)
-                                      ? 'Complete'
-                                      : 'Complete (${_selectedAIChats.length})',
-                    ),
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: (_isLoading || _isRecommending || (_selectedAIChats.isEmpty && recommendedChats.isNotEmpty))
+                      ? null
+                      : () {
+                          HapticFeedback.mediumImpact();
+                          _completeOnboarding();
+                        },
+                  icon: _isLoading
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.check_rounded),
+                  label: Text(
+                    _isLoading
+                        ? 'Setting up...'
+                        : _isRecommending
+                            ? 'Finding...'
+                            : (_selectedAIChats.isEmpty && recommendedChats.isNotEmpty)
+                                ? 'Select at least one'
+                                : (_selectedAIChats.isEmpty && recommendedChats.isEmpty)
+                                    ? 'Complete'
+                                    : 'Complete (${_selectedAIChats.length})',
+                  ),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ],
