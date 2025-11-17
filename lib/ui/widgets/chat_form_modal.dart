@@ -66,6 +66,9 @@ class _ChatFormModalState extends State<ChatFormModal> {
   bool _useQuickCreate = false; // Only for creating new chats
   bool _isGenerating = false;
   bool _hasGeneratedConfig = false; // Track if we've generated config from quick create
+  bool _isCustomizingFromVariation = false; // Track if we're customizing from variation selection
+  List<Map<String, dynamic>> _generatedVariations = []; // Store multiple variations
+  int? _selectedVariationIndex; // Track which variation is selected
   
   // Model selection
   List<Model> _models = [];
@@ -169,37 +172,26 @@ class _ChatFormModalState extends State<ChatFormModal> {
 
     setState(() {
       _isGenerating = true;
+      _generatedVariations = [];
+      _selectedVariationIndex = null;
     });
 
     try {
-      final result = await _openRouterApi.generateChatFromDescription(
+      final variations = await _openRouterApi.generateChatFromDescription(
         userDescription: description,
+        variationCount: 3,
       );
       
-      if (result != null && mounted) {
-        // Auto-fill the form with generated values
-        final name = result['name'] as String;
-        final shortDescription = result['shortDescription'] as String;
-        final systemPrompt = result['systemPrompt'] as String;
-        
-        _nameController.text = name;
-        _shortDescriptionController.text = shortDescription;
-        _systemPromptController.text = systemPrompt;
-        
-        // Show preview in quick create mode, don't switch to manual
+      if (variations.isNotEmpty && mounted) {
         setState(() {
+          _generatedVariations = variations;
+          _selectedVariationIndex = 0; // Select first variation by default
           _hasGeneratedConfig = true;
           _isGenerating = false;
         });
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('AI configuration generated! Review and create, or customize further.'),
-              duration: Duration(seconds: 3),
-            ),
-          );
-        }
+        
+        // Auto-fill with first variation
+        _applyVariation(0);
       } else {
         if (mounted) {
           setState(() {
@@ -207,7 +199,7 @@ class _ChatFormModalState extends State<ChatFormModal> {
           });
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Failed to generate configuration. Please try again or use manual setup.'),
+              content: Text('Failed to generate configurations. Please try again or use manual setup.'),
               duration: Duration(seconds: 3),
             ),
           );
@@ -226,6 +218,19 @@ class _ChatFormModalState extends State<ChatFormModal> {
         );
       }
     }
+  }
+
+  void _applyVariation(int index) {
+    if (index < 0 || index >= _generatedVariations.length) return;
+    
+    final variation = _generatedVariations[index];
+    _nameController.text = variation['name'] as String;
+    _shortDescriptionController.text = variation['shortDescription'] as String;
+    _systemPromptController.text = variation['systemPrompt'] as String;
+    
+    setState(() {
+      _selectedVariationIndex = index;
+    });
   }
 
   Future<void> _pickImage() async {
@@ -400,17 +405,15 @@ class _ChatFormModalState extends State<ChatFormModal> {
       padding: EdgeInsets.only(
         bottom: mediaQuery.viewInsets.bottom,
       ),
-      child: SafeArea(
-        top: false,
-        child: Container(
-          constraints: BoxConstraints(
-            maxHeight: mediaQuery.size.height * 0.9,
-          ),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-          ),
-          child: Column(
+      child: Container(
+        constraints: BoxConstraints(
+          maxHeight: mediaQuery.size.height * 0.9,
+        ),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
             // Handle bar
@@ -438,11 +441,17 @@ class _ChatFormModalState extends State<ChatFormModal> {
             
             // Scrollable Form content
             Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(20),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
+              child: GestureDetector(
+                onTap: () {
+                  // Dismiss keyboard when tapping on empty space (not on text fields or buttons)
+                  FocusScope.of(context).unfocus();
+                },
+                behavior: HitTestBehavior.opaque,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -488,121 +497,169 @@ class _ChatFormModalState extends State<ChatFormModal> {
                             ),
                           ),
                           const SizedBox(height: 12),
-                          TextButton(
-                            onPressed: _isGenerating ? null : () {
-                              setState(() {
-                                _useQuickCreate = false;
-                              });
-                            },
-                            child: const Text('Advanced Setup'),
-                            style: TextButton.styleFrom(
-                              foregroundColor: theme.colorScheme.onSurface.withOpacity(0.6),
+                          Center(
+                            child: TextButton(
+                              onPressed: _isGenerating ? null : () {
+                                setState(() {
+                                  _useQuickCreate = false;
+                                });
+                              },
+                              child: const Text('Advanced Setup'),
+                              style: TextButton.styleFrom(
+                                foregroundColor: theme.colorScheme.primary,
+                              ),
                             ),
                           ),
                         ] else ...[
-                          // Preview after generation - allow quick create or customize
-                          Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: theme.colorScheme.primaryContainer.withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: theme.colorScheme.primary.withOpacity(0.2),
+                          // Show multiple variations for selection
+                          if (_generatedVariations.isNotEmpty) ...[
+                            Text(
+                              'Choose a variation:',
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
-                            child: Row(
+                            const SizedBox(height: 12),
+                            // List of variations
+                            ...List.generate(_generatedVariations.length, (index) {
+                              final variation = _generatedVariations[index];
+                              final isSelected = _selectedVariationIndex == index;
+                              final name = variation['name'] as String;
+                              final shortDescription = variation['shortDescription'] as String;
+                              
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 12),
+                                child: InkWell(
+                                  onTap: () => _applyVariation(index),
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Container(
+                                    padding: const EdgeInsets.all(16),
+                                    decoration: BoxDecoration(
+                                      color: isSelected
+                                          ? theme.colorScheme.primaryContainer.withOpacity(0.3)
+                                          : theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: isSelected
+                                            ? theme.colorScheme.primary
+                                            : theme.colorScheme.outlineVariant.withOpacity(0.5),
+                                        width: isSelected ? 2 : 1,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        // Avatar
+                                        AppAvatar(
+                                          size: 48,
+                                          name: name.isEmpty ? 'A' : name,
+                                          imageUrl: widget.chat?.avatarUrl,
+                                          isCircle: true,
+                                        ),
+                                        const SizedBox(width: 12),
+                                        // Chat info
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                name,
+                                                style: theme.textTheme.titleSmall?.copyWith(
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                shortDescription,
+                                                style: theme.textTheme.bodySmall?.copyWith(
+                                                  color: theme.colorScheme.onSurface.withOpacity(0.7),
+                                                ),
+                                                maxLines: 2,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        // Selection indicator
+                                        if (isSelected)
+                                          Icon(
+                                            Icons.check_circle,
+                                            color: theme.colorScheme.primary,
+                                            size: 24,
+                                          )
+                                        else
+                                          Icon(
+                                            Icons.radio_button_unchecked,
+                                            color: theme.colorScheme.onSurface.withOpacity(0.3),
+                                            size: 24,
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }),
+                            const SizedBox(height: 20),
+                            Row(
                               children: [
-                                // Avatar - matches chat list style
-                                AppAvatar(
-                                  size: 56,
-                                  name: _nameController.text.isEmpty ? 'A' : _nameController.text,
-                                  imageUrl: widget.chat?.avatarUrl,
-                                  isCircle: true,
+                                Expanded(
+                                  child: OutlinedButton(
+                                    onPressed: _isSaving ? null : () {
+                                      setState(() {
+                                        _hasGeneratedConfig = false;
+                                        _generatedVariations = [];
+                                        _selectedVariationIndex = null;
+                                        _quickDescriptionController.clear();
+                                        _isCustomizingFromVariation = false;
+                                      });
+                                    },
+                                    child: const Text('Recreate'),
+                                    style: OutlinedButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(vertical: 16),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                    ),
+                                  ),
                                 ),
                                 const SizedBox(width: 12),
-                                // Chat info - matches chat list style
                                 Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        _nameController.text,
-                                        style: theme.textTheme.titleMedium?.copyWith(
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
+                                  child: FilledButton(
+                                    onPressed: _isSaving ? null : _handleSave,
+                                    style: FilledButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(vertical: 16),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
                                       ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        _shortDescriptionController.text,
-                                        style: theme.textTheme.bodyMedium?.copyWith(
-                                          color: theme.colorScheme.onSurface.withOpacity(0.7),
-                                        ),
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ],
+                                    ),
+                                    child: _isSaving
+                                        ? const SizedBox(
+                                            height: 20,
+                                            width: 20,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          )
+                                        : const Text('Confirm'),
                                   ),
                                 ),
                               ],
                             ),
-                          ),
-                          const SizedBox(height: 20),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: OutlinedButton(
-                                  onPressed: _isSaving ? null : () {
-                                    setState(() {
-                                      _hasGeneratedConfig = false;
-                                      _quickDescriptionController.clear();
-                                    });
-                                  },
-                                  child: const Text('Recreate'),
-                                  style: OutlinedButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(vertical: 16),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                  ),
-                                ),
+                            const SizedBox(height: 12),
+                            TextButton(
+                              onPressed: () {
+                                setState(() {
+                                  _isCustomizingFromVariation = true;
+                                  _useQuickCreate = false;
+                                });
+                              },
+                              child: const Text('Customize'),
+                              style: TextButton.styleFrom(
+                                foregroundColor: theme.colorScheme.onSurface.withOpacity(0.7),
                               ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: FilledButton(
-                                  onPressed: _isSaving ? null : _handleSave,
-                                  style: FilledButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(vertical: 16),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                  ),
-                                  child: _isSaving
-                                      ? const SizedBox(
-                                          height: 20,
-                                          width: 20,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                          ),
-                                        )
-                                      : const Text('Confirm'),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          TextButton(
-                            onPressed: () {
-                              setState(() {
-                                _useQuickCreate = false;
-                              });
-                            },
-                            child: const Text('Customize'),
-                            style: TextButton.styleFrom(
-                              foregroundColor: theme.colorScheme.onSurface.withOpacity(0.7),
                             ),
-                          ),
+                          ],
                         ],
                       ] else ...[
                         // Manual Setup Mode (existing form)
@@ -909,6 +966,7 @@ class _ChatFormModalState extends State<ChatFormModal> {
                                   setState(() {
                                     _useQuickCreate = true;
                                     _hasGeneratedConfig = false;
+                                    _isCustomizingFromVariation = false;
                                   });
                                 },
                                 child: const Text('Quick Create'),
@@ -922,7 +980,18 @@ class _ChatFormModalState extends State<ChatFormModal> {
                               children: [
                                 Expanded(
                                   child: OutlinedButton(
-                                    onPressed: _isSaving ? null : () => Navigator.pop(context),
+                                    onPressed: _isSaving ? null : () {
+                                      // If customizing from variation, go back to variation list
+                                      // Otherwise, close the modal
+                                      if (_isCustomizingFromVariation) {
+                                        setState(() {
+                                          _isCustomizingFromVariation = false;
+                                          _useQuickCreate = true;
+                                        });
+                                      } else {
+                                        Navigator.pop(context);
+                                      }
+                                    },
                                     child: const Text('Cancel'),
                                     style: OutlinedButton.styleFrom(
                                       padding: const EdgeInsets.symmetric(vertical: 16),
@@ -962,8 +1031,8 @@ class _ChatFormModalState extends State<ChatFormModal> {
                 ),
               ),
             ),
+          ),
           ],
-        ),
         ),
       ),
     );

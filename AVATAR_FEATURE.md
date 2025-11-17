@@ -193,7 +193,7 @@ For Android 13+ (API 33+), also add:
 
 ### Creating a Chat with Avatar
 
-1. Tap the "New AI Chat" button
+1. Tap the "Create" button
 2. Tap on the avatar circle at the top
 3. Select an image from your gallery
 4. Fill in the AI name and system prompt

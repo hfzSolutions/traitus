@@ -261,7 +261,7 @@ class _ChatListPageState extends State<ChatListPage> {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _showCreateChatDialog(context),
         icon: const Icon(Icons.add),
-        label: const Text('New AI Chat'),
+        label: const Text('Create'),
         backgroundColor: theme.colorScheme.primary,
         foregroundColor: theme.colorScheme.onPrimary,
       ),

@@ -158,13 +158,14 @@ WHERE platform = 'all';
 ### App Startup Flow
 ```
 1. App launches → Splash screen
-2. Check version (background) → Query database
-3. Evaluate result:
-   - Maintenance mode → Block app with maintenance screen
-   - Force update needed → Block app with update screen
-   - Optional update → Show dialog (dismissible)
-   - Up to date → Continue normally
-4. Proceed to authentication/home
+2. Authentication & home UI render immediately
+3. Version check runs in the background (non-blocking)
+4. Evaluate result:
+   - Maintenance mode → Overlay maintenance screen (blocks interaction)
+   - Force update needed → Overlay update screen (blocks interaction)
+   - Optional update → Show lightweight dialog (dismissible, once per session)
+   - Up to date → No UI change
+5. Users continue with normal flow unless a blocking overlay appears
 ```
 
 ### User Experience
@@ -179,11 +180,17 @@ WHERE platform = 'all';
 
 **Optional Update (Non-blocking)**
 - Friendly dialog with update message
+- Runs after main UI is available, so users aren’t stuck on splash
 - "Update" button → Opens app store directly (no extra navigation)
 - "Maybe Later" button → Dismisses dialog
 - Only shown once per app session
 - User can continue using app normally
 - Lightweight and non-intrusive
+
+**Background Update Check Indicator**
+- A small banner appears at the top while the check runs
+- Communicates progress without blocking navigation
+- Disappears automatically once status is known
 
 **Maintenance Mode (Blocking)**
 - Shows maintenance icon and message
