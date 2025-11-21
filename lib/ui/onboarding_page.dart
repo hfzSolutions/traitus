@@ -59,6 +59,9 @@ class _OnboardingPageState extends State<OnboardingPage>
   List<Map<String, dynamic>>? _aiDynamicChats;
   bool _isRecommending = false;
   String? _recommendError;
+  
+  // AuthProvider reference (stored to avoid context access in dispose)
+  AuthProvider? _authProvider;
 
   // Available preferences for AI chat selection
   final List<Map<String, dynamic>> _availablePreferences = [
@@ -308,15 +311,48 @@ class _OnboardingPageState extends State<OnboardingPage>
       CurvedAnimation(parent: _animationController, curve: Curves.easeOutCubic),
     );
     _animationController.forward();
+    
+    // Load existing display name from user profile after first frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadExistingProfileData();
+    });
+    
+    // Listen to AuthProvider changes to update username when profile loads
+    // Store reference to avoid context access in dispose()
+    _authProvider = Provider.of<AuthProvider>(context, listen: false);
+    _authProvider!.addListener(_onAuthProviderChanged);
   }
-
+  
+  void _onAuthProviderChanged() {
+    // Update username field when profile loads or changes
+    // Only update if username field is still empty
+    if (_usernameController.text.isEmpty) {
+      _loadExistingProfileData();
+    }
+  }
+  
   @override
   void dispose() {
+    // Remove listener to prevent memory leaks
+    // Use stored reference instead of context to avoid deactivated widget error
+    _authProvider?.removeListener(_onAuthProviderChanged);
     _usernameController.dispose();
     _customInterestsController.dispose();
     _animationController.dispose();
     _loadingCarouselTimer?.cancel();
     super.dispose();
+  }
+  
+  void _loadExistingProfileData() {
+    if (!mounted) return;
+    final authProvider = _authProvider ?? Provider.of<AuthProvider>(context, listen: false);
+    final displayName = authProvider.userProfile?.displayName;
+    // Only update if username field is empty and we have a display name
+    if (displayName != null && displayName.isNotEmpty && _usernameController.text.isEmpty) {
+      setState(() {
+        _usernameController.text = displayName;
+      });
+    }
   }
 
   void _changeStep(int newStep) {
@@ -898,6 +934,59 @@ class _OnboardingPageState extends State<OnboardingPage>
                 ),
               ),
             ),
+            const SizedBox(height: 24),
+            
+            // Sign out button (small, for changing account)
+            Consumer<AuthProvider>(
+              builder: (context, authProvider, _) {
+                return TextButton.icon(
+                  onPressed: authProvider.isLoading ? null : () async {
+                    // Show confirmation dialog
+                    final confirmed = await showDialog<bool>(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                        title: const Text('Sign Out'),
+                        content: const Text('Are you sure you want to sign out? You can sign in with a different account.'),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.of(context).pop(false),
+                            child: const Text('Cancel'),
+                          ),
+                          FilledButton(
+                            onPressed: () => Navigator.of(context).pop(true),
+                            child: const Text('Sign Out'),
+                          ),
+                        ],
+                      ),
+                    );
+                    
+                    if (confirmed == true && mounted) {
+                      try {
+                        await authProvider.signOut();
+                        // Navigation will be handled by AuthCheckPage
+                      } catch (e) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Error signing out: ${e.toString().replaceAll('Exception: ', '')}'),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                        }
+                      }
+                    }
+                  },
+                  icon: const Icon(Icons.logout, size: 18),
+                  label: const Text(
+                    'Sign Out',
+                    style: TextStyle(fontSize: 14),
+                  ),
+                  style: TextButton.styleFrom(
+                    foregroundColor: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                );
+              },
+            ),
           ],
         ),
       ),
@@ -909,9 +998,15 @@ class _OnboardingPageState extends State<OnboardingPage>
       children: [
         // Scrollable content
         Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(32.0),
-            child: Form(
+          child: GestureDetector(
+            onTap: () {
+              // Dismiss keyboard when tapping on empty space
+              FocusScope.of(context).unfocus();
+            },
+            behavior: HitTestBehavior.opaque,
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(32.0),
+              child: Form(
               key: _formKey,
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -1039,14 +1134,8 @@ class _OnboardingPageState extends State<OnboardingPage>
               ),
               const SizedBox(height: 16),
               
-              // Date of Birth field (required)
+              // Date of Birth field (optional)
               FormField<DateTime?>(
-                validator: (_) {
-                  if (_selectedDateOfBirth == null) {
-                    return 'Please select your date of birth';
-                  }
-                  return null;
-                },
                 builder: (state) {
                   return InkWell(
                     onTap: _selectDateOfBirth,
@@ -1114,6 +1203,7 @@ class _OnboardingPageState extends State<OnboardingPage>
                 ],
               ),
             ),
+            ),
           ),
         ),
         
@@ -1176,7 +1266,13 @@ class _OnboardingPageState extends State<OnboardingPage>
       children: [
         // Scrollable content
         Expanded(
-          child: SingleChildScrollView(
+          child: GestureDetector(
+            onTap: () {
+              // Dismiss keyboard when tapping on empty space
+              FocusScope.of(context).unfocus();
+            },
+            behavior: HitTestBehavior.opaque,
+            child: SingleChildScrollView(
             padding: const EdgeInsets.all(32.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1375,6 +1471,7 @@ class _OnboardingPageState extends State<OnboardingPage>
                 const SizedBox(height: 24),
               ],
             ),
+            ),
           ),
         ),
         
@@ -1456,7 +1553,13 @@ class _OnboardingPageState extends State<OnboardingPage>
       children: [
         // Scrollable content
         Expanded(
-          child: SingleChildScrollView(
+          child: GestureDetector(
+            onTap: () {
+              // Dismiss keyboard when tapping on empty space
+              FocusScope.of(context).unfocus();
+            },
+            behavior: HitTestBehavior.opaque,
+            child: SingleChildScrollView(
             padding: const EdgeInsets.all(32.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1572,6 +1675,7 @@ class _OnboardingPageState extends State<OnboardingPage>
                 ],
               ],
             ),
+            ),
           ),
         ),
         
@@ -1640,7 +1744,13 @@ class _OnboardingPageState extends State<OnboardingPage>
       children: [
         // Scrollable content
         Expanded(
-          child: _isRecommending
+          child: GestureDetector(
+            onTap: () {
+              // Dismiss keyboard when tapping on empty space
+              FocusScope.of(context).unfocus();
+            },
+            behavior: HitTestBehavior.opaque,
+            child: _isRecommending
               ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -1899,6 +2009,7 @@ class _OnboardingPageState extends State<OnboardingPage>
                     ),
                   ],
                 ),
+          ),
         ),
         
         // Fixed bottom navigation

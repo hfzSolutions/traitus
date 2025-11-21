@@ -4,6 +4,7 @@ import 'package:traitus/models/user_profile.dart';
 import 'package:traitus/services/database_service.dart';
 import 'package:traitus/services/supabase_service.dart';
 import 'package:traitus/services/notification_service.dart';
+import 'package:traitus/services/chat_cache_service.dart';
 
 class AuthProvider extends ChangeNotifier {
   final SupabaseService _supabaseService;
@@ -46,6 +47,8 @@ class AuthProvider extends ChangeNotifier {
         _userProfile = null;
         // Clear OneSignal external user ID on logout
         NotificationService.clearExternalUserId();
+        // Clear chat cache on logout
+        ChatCacheService.clearCache();
       }
       notifyListeners();
     });
@@ -77,6 +80,7 @@ class AuthProvider extends ChangeNotifier {
   Future<void> signUp({
     required String email,
     required String password,
+    String? username,
   }) async {
     _isLoading = true;
     _error = null;
@@ -86,6 +90,7 @@ class AuthProvider extends ChangeNotifier {
       final response = await _supabaseService.signUp(
         email: email,
         password: password,
+        username: username,
       );
       
       // If signup successful and user is authenticated, ensure profile exists
@@ -155,6 +160,8 @@ class AuthProvider extends ChangeNotifier {
       _userProfile = null;
       // Clear OneSignal external user ID on logout
       await NotificationService.clearExternalUserId();
+      // Clear chat cache on logout
+      await ChatCacheService.clearCache();
     } catch (e) {
       _error = e.toString();
     } finally {
@@ -293,6 +300,33 @@ class AuthProvider extends ChangeNotifier {
   void clearError() {
     _error = null;
     notifyListeners();
+  }
+
+  /// Delete the user's account permanently
+  Future<void> deleteAccount() async {
+    _isLoading = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      // Call the delete-account edge function
+      await _supabaseService.deleteAccount();
+      
+      // Clear local state
+      _user = null;
+      _userProfile = null;
+      
+      // Clear OneSignal external user ID
+      await NotificationService.clearExternalUserId();
+      // Clear chat cache on account deletion
+      await ChatCacheService.clearCache();
+    } catch (e) {
+      _error = e.toString();
+      rethrow;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
   }
 }
 

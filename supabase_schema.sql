@@ -64,8 +64,8 @@ CREATE TABLE public.messages (
   generated_images ARRAY,
   model text,
   CONSTRAINT messages_pkey PRIMARY KEY (id),
-  CONSTRAINT messages_chat_id_fkey FOREIGN KEY (chat_id) REFERENCES public.chats(id),
-  CONSTRAINT messages_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+  CONSTRAINT messages_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT messages_chat_id_fkey FOREIGN KEY (chat_id) REFERENCES public.chats(id)
 );
 CREATE TABLE public.models (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -77,6 +77,14 @@ CREATE TABLE public.models (
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
   CONSTRAINT models_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.note_sections (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  note_id uuid NOT NULL,
+  content text NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT note_sections_pkey PRIMARY KEY (id),
+  CONSTRAINT note_sections_note_id_fkey FOREIGN KEY (note_id) REFERENCES public.notes(id)
 );
 CREATE TABLE public.notes (
   id uuid NOT NULL DEFAULT gen_random_uuid(),

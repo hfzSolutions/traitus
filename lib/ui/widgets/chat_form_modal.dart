@@ -67,6 +67,7 @@ class _ChatFormModalState extends State<ChatFormModal> {
   bool _isGenerating = false;
   bool _hasGeneratedConfig = false; // Track if we've generated config from quick create
   bool _isCustomizingFromVariation = false; // Track if we're customizing from variation selection
+  bool _showResponseStyleSelection = false; // Track if we're showing response style selection
   List<Map<String, dynamic>> _generatedVariations = []; // Store multiple variations
   int? _selectedVariationIndex; // Track which variation is selected
   
@@ -483,8 +484,8 @@ class _ChatFormModalState extends State<ChatFormModal> {
                     children: [
                       // Quick Create Mode (primary interface for creating)
                       if (_useQuickCreate && isCreating) ...[
-                        // Show input form if not generated yet, or preview if generated
-                        if (!_hasGeneratedConfig) ...[
+                        // Show input form if not generated yet
+                        if (!_hasGeneratedConfig && !_showResponseStyleSelection) ...[
                           const SizedBox(height: 8),
                           TextFormField(
                             controller: _quickDescriptionController,
@@ -536,6 +537,183 @@ class _ChatFormModalState extends State<ChatFormModal> {
                               ),
                             ),
                           ),
+                        ] else if (_showResponseStyleSelection) ...[
+                          // Simple Response Style Selection
+                          const SizedBox(height: 8),
+                          
+                          // Show selected AI chat card
+                          if (_selectedVariationIndex != null && 
+                              _selectedVariationIndex! < _generatedVariations.length) ...[
+                            Builder(
+                              builder: (context) {
+                                final variation = _generatedVariations[_selectedVariationIndex!];
+                                final name = variation['name'] as String;
+                                final shortDescription = variation['shortDescription'] as String;
+                                
+                                return Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: theme.colorScheme.primaryContainer.withOpacity(0.3),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: theme.colorScheme.primary.withOpacity(0.5),
+                                      width: 1.5,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      // Avatar
+                                      AppAvatar(
+                                        size: 48,
+                                        name: name.isEmpty ? 'A' : name,
+                                        imageUrl: widget.chat?.avatarUrl,
+                                        isCircle: true,
+                                      ),
+                                      const SizedBox(width: 12),
+                                      // Chat info
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                Text(
+                                                  name,
+                                                  style: theme.textTheme.titleSmall?.copyWith(
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                                ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              shortDescription,
+                                              style: theme.textTheme.bodySmall?.copyWith(
+                                                color: theme.colorScheme.onSurface.withOpacity(0.7),
+                                              ),
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                            const SizedBox(height: 20),
+                          ],
+                          
+                          const SizedBox(height: 4),
+                          
+                          // Tone - Simple 3 options
+                          _buildSimpleOption(
+                            theme,
+                            'Tone',
+                            [
+                              {'label': 'Friendly', 'value': 'friendly'},
+                              {'label': 'Professional', 'value': 'professional'},
+                              {'label': 'Casual', 'value': 'casual'},
+                            ],
+                            _selectedTone,
+                            (value) => setState(() => _selectedTone = value),
+                          ),
+                          const SizedBox(height: 20),
+                          
+                          // Length - Simple 3 options
+                          _buildSimpleOption(
+                            theme,
+                            'Length',
+                            [
+                              {'label': 'Brief', 'value': 'brief'},
+                              {'label': 'Balanced', 'value': 'balanced'},
+                              {'label': 'Detailed', 'value': 'detailed'},
+                            ],
+                            _selectedLength,
+                            (value) => setState(() => _selectedLength = value),
+                          ),
+                          const SizedBox(height: 20),
+                          
+                          // Emojis - Simple toggle
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Use emojis',
+                                  style: theme.textTheme.bodyLarge,
+                                ),
+                              ),
+                              Switch(
+                                value: _useEmojis,
+                                onChanged: (value) {
+                                  setState(() {
+                                    _useEmojis = value;
+                                  });
+                                },
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 32),
+                          
+                          // Action Buttons
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton(
+                                  onPressed: _isSaving ? null : () {
+                                    setState(() {
+                                      _showResponseStyleSelection = false;
+                                    });
+                                  },
+                                  child: const Text('Back'),
+                                  style: OutlinedButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(vertical: 16),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: FilledButton(
+                                  onPressed: _isSaving ? null : _handleSave,
+                                  style: FilledButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(vertical: 16),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  child: _isSaving
+                                      ? const SizedBox(
+                                          height: 20,
+                                          width: 20,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Text('Create'),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          TextButton(
+                            onPressed: () {
+                              setState(() {
+                                _isCustomizingFromVariation = true;
+                                _useQuickCreate = false;
+                                _showResponseStyleSelection = false;
+                              });
+                            },
+                            child: const Text('Customize'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: theme.colorScheme.onSurface.withOpacity(0.7),
+                            ),
+                          ),
                         ] else ...[
                           // Show multiple variations for selection
                           if (_generatedVariations.isNotEmpty) ...[
@@ -580,13 +758,41 @@ class _ChatFormModalState extends State<ChatFormModal> {
                                           child: Column(
                                             crossAxisAlignment: CrossAxisAlignment.start,
                                             children: [
-                                              Text(
-                                                name,
-                                                style: theme.textTheme.titleSmall?.copyWith(
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
+                                              Row(
+                                                children: [
+                                                  Flexible(
+                                                    child: Text(
+                                                      name,
+                                                      style: theme.textTheme.titleSmall?.copyWith(
+                                                        fontWeight: FontWeight.w600,
+                                                      ),
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
+                                                    ),
+                                                  ),
+                                                  // Add "Recommended" badge to first variation
+                                                  if (index == 0) ...[
+                                                    const SizedBox(width: 8),
+                                                    Container(
+                                                      padding: const EdgeInsets.symmetric(
+                                                        horizontal: 8,
+                                                        vertical: 3,
+                                                      ),
+                                                      decoration: BoxDecoration(
+                                                        color: theme.colorScheme.primaryContainer,
+                                                        borderRadius: BorderRadius.circular(8),
+                                                      ),
+                                                      child: Text(
+                                                        'Recommended',
+                                                        style: theme.textTheme.labelSmall?.copyWith(
+                                                          color: theme.colorScheme.onPrimaryContainer,
+                                                          fontWeight: FontWeight.w600,
+                                                          fontSize: 10,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ],
                                               ),
                                               const SizedBox(height: 4),
                                               Text(
@@ -631,6 +837,7 @@ class _ChatFormModalState extends State<ChatFormModal> {
                                         _selectedVariationIndex = null;
                                         _quickDescriptionController.clear();
                                         _isCustomizingFromVariation = false;
+                                        _showResponseStyleSelection = false;
                                       });
                                     },
                                     child: const Text('Recreate'),
@@ -645,22 +852,19 @@ class _ChatFormModalState extends State<ChatFormModal> {
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: FilledButton(
-                                    onPressed: _isSaving ? null : _handleSave,
+                                    onPressed: _isSaving ? null : () {
+                                      // Show response style selection instead of directly saving
+                                      setState(() {
+                                        _showResponseStyleSelection = true;
+                                      });
+                                    },
                                     style: FilledButton.styleFrom(
                                       padding: const EdgeInsets.symmetric(vertical: 16),
                                       shape: RoundedRectangleBorder(
                                         borderRadius: BorderRadius.circular(12),
                                       ),
                                     ),
-                                    child: _isSaving
-                                        ? const SizedBox(
-                                            height: 20,
-                                            width: 20,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                            ),
-                                          )
-                                        : const Text('Confirm'),
+                                    child: const Text('Next'),
                                   ),
                                 ),
                               ],
@@ -1056,5 +1260,68 @@ class _ChatFormModalState extends State<ChatFormModal> {
       ),
     );
   }
+
+  Widget _buildSimpleOption(
+    ThemeData theme,
+    String title,
+    List<Map<String, String>> options,
+    String selectedValue,
+    void Function(String) onSelected,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: theme.textTheme.labelLarge?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: options.map((option) {
+            final isSelected = selectedValue == option['value'];
+            return Expanded(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  right: option != options.last ? 8 : 0,
+                ),
+                child: InkWell(
+                  onTap: () => onSelected(option['value']!),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? theme.colorScheme.primaryContainer
+                          : theme.colorScheme.surfaceContainerHighest.withOpacity(0.5),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: isSelected
+                            ? theme.colorScheme.primary
+                            : Colors.transparent,
+                        width: 1.5,
+                      ),
+                    ),
+                    child: Text(
+                      option['label']!,
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: isSelected
+                            ? theme.colorScheme.onPrimaryContainer
+                            : theme.colorScheme.onSurface,
+                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ],
+    );
+  }
+
 }
 

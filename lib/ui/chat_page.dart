@@ -1778,12 +1778,19 @@ class _InputBarState extends State<_InputBar> {
   final stt.SpeechToText _speech = stt.SpeechToText();
   final ImagePicker _imagePicker = ImagePicker();
   final StorageService _storageService = StorageService();
+  final FocusNode _focusNode = FocusNode();
   bool _isListening = false;
+  bool _isStarting = false; // Prevent multiple simultaneous starts
   bool _isAvailable = false;
   bool _isHoldToTalkMode = false; // Toggle between text input and hold-to-talk mode
   String _baseText = '';
   String _partialText = '';
   bool _isUpdatingFromSpeech = false;
+  double _soundLevel = 0.0; // Current sound level (0.0 to 1.0)
+  DateTime? _lastStartTime; // Track last start time to prevent abuse
+  Future<void>? _currentStartOperation; // Track current start operation to prevent overlapping
+  DateTime? _pointerDownTime; // Track when pointer was pressed down
+  bool _hasStartedFromPointer = false; // Track if we started from this pointer press
   final List<_AttachedImage> _attachedImages = []; // Store attached images with upload state
 
   @override
@@ -1933,6 +1940,7 @@ class _InputBarState extends State<_InputBar> {
   void dispose() {
     widget.controller.removeListener(_onTextChanged);
     _speech.stop();
+    _focusNode.dispose();
     super.dispose();
   }
 
@@ -2129,16 +2137,93 @@ class _InputBarState extends State<_InputBar> {
 
   /// Start recording when user starts holding the button
   Future<void> _startHoldToTalk() async {
-    if (!_isAvailable || _isListening) return;
+    // Prevent abuse: check if already starting or listening
+    if (!_isAvailable || _isListening || _isStarting) return;
+    
+    // Prevent rapid clicking: debounce with 500ms minimum interval (more aggressive)
+    final now = DateTime.now();
+    if (_lastStartTime != null && now.difference(_lastStartTime!).inMilliseconds < 500) {
+      return;
+    }
+    
+    // If there's already a start operation in progress, wait for it or return
+    if (_currentStartOperation != null) {
+      try {
+        await _currentStartOperation;
+      } catch (e) {
+        debugPrint('Previous start operation error: $e');
+      }
+      // After waiting, check again if we should proceed
+      if (!_isAvailable || _isListening || _isStarting) return;
+    }
+
+    // Set flags immediately to prevent other calls from proceeding
+    _isStarting = true;
+    _lastStartTime = now;
+    
+    // Create and track the start operation with timeout to prevent hanging
+    _currentStartOperation = _performStartHoldToTalk().timeout(
+      const Duration(seconds: 5),
+      onTimeout: () {
+        debugPrint('Timeout starting speech recognition');
+        if (mounted) {
+          setState(() {
+            _isStarting = false;
+            _isListening = false;
+          });
+        }
+      },
+    );
+    
+    try {
+      await _currentStartOperation;
+    } catch (e) {
+      debugPrint('Start operation error: $e');
+      // Ensure flags are reset on any error to prevent hanging
+      if (mounted) {
+        setState(() {
+          _isStarting = false;
+          _isListening = false;
+        });
+      }
+    } finally {
+      _currentStartOperation = null;
+    }
+  }
+
+  /// Internal method to perform the actual start operation
+  Future<void> _performStartHoldToTalk() async {
+    // Stop any existing session first to prevent conflicts
+    if (_speech.isListening) {
+      try {
+        await _speech.stop();
+        // Wait a bit longer for proper cleanup to prevent conflicts
+        await Future.delayed(const Duration(milliseconds: 200));
+      } catch (e) {
+        debugPrint('Error stopping existing speech session: $e');
+        // Continue anyway, but reset state
+        _isStarting = false;
+        return;
+      }
+    }
+
+    // Double-check we're still in a valid state after cleanup
+    if (!mounted || !_isAvailable) {
+      _isStarting = false;
+      return;
+    }
 
     // Provide haptic feedback when recording starts
     HapticFeedback.mediumImpact();
 
-    setState(() {
-      _isListening = true;
-      _baseText = widget.controller.text;
-      _partialText = '';
-    });
+    if (mounted) {
+      setState(() {
+        _isListening = true;
+        _baseText = widget.controller.text;
+        _partialText = '';
+        _soundLevel = 0.0; // Reset sound level
+      });
+    }
     
     try {
       await _speech.listen(
@@ -2167,18 +2252,40 @@ class _InputBarState extends State<_InputBar> {
             _isUpdatingFromSpeech = false;
           });
         },
+        onSoundLevelChange: (level) {
+          // Update sound level for real-time visualization
+          // Sound level is typically between -160 (silence) and 0 (max) in dB
+          // Normalize to 0.0 - 1.0 range with better sensitivity
+          if (mounted && _isListening) {
+            setState(() {
+              // Convert from dB scale (-160 to 0) to 0.0-1.0
+              // Speech typically ranges from -60dB (quiet) to -20dB (loud)
+              // Use exponential curve for better sensitivity to speech variations
+              final normalized = ((level + 160) / 160).clamp(0.0, 1.0);
+              // Apply exponential curve: makes quiet speech more visible, prevents saturation
+              _soundLevel = (normalized * normalized * 1.3).clamp(0.0, 1.0);
+            });
+          }
+        },
         listenFor: const Duration(seconds: 60), // Longer duration for hold-to-talk
         pauseFor: const Duration(seconds: 3),
         localeId: 'en_US',
         cancelOnError: true,
         partialResults: true,
       );
+      // Only reset _isStarting if we successfully started
+      if (mounted) {
+        _isStarting = false;
+      }
     } catch (e) {
       debugPrint('Error starting speech recognition: $e');
+      // Always reset flags on error
       if (mounted) {
         setState(() {
           _isListening = false;
           _partialText = '';
+          _soundLevel = 0.0;
+          _isStarting = false;
         });
         final errorString = e.toString().toLowerCase();
         if (errorString.contains('permission') || errorString.contains('denied') || errorString.contains('microphone')) {
@@ -2197,16 +2304,38 @@ class _InputBarState extends State<_InputBar> {
 
   /// Stop recording when user releases the button
   Future<void> _stopHoldToTalk() async {
-    if (!_isListening) return;
+    // Prevent stopping if not actually listening or if still starting
+    if (!_isListening && !_isStarting) return;
+    
+    // CRITICAL: Update state IMMEDIATELY (synchronously) before async operations
+    // This ensures the UI updates right away, even if stop() takes time
+    final wasListening = _isListening;
+    _isStarting = false;
+    
+    if (mounted) {
+      setState(() {
+        _isListening = false;
+        _partialText = '';
+        _soundLevel = 0.0; // Reset sound level
+      });
+    }
     
     // Provide haptic feedback when recording stops
     HapticFeedback.lightImpact();
     
-    await _speech.stop();
-    setState(() {
-      _isListening = false;
-      _partialText = '';
-    });
+    // Stop speech recognition if it was listening (with timeout to prevent hanging)
+    if (wasListening && _speech.isListening) {
+      try {
+        await _speech.stop().timeout(
+          const Duration(seconds: 2),
+          onTimeout: () {
+            debugPrint('Timeout stopping speech recognition');
+          },
+        );
+      } catch (e) {
+        debugPrint('Error stopping speech recognition: $e');
+      }
+    }
     
     // Automatically send the message if there's transcribed text
     // Keep the hold-to-talk mode active so user can continue using it
@@ -2222,13 +2351,17 @@ class _InputBarState extends State<_InputBar> {
   /// Stop listening to microphone input
   /// This is called when a message is sent to ensure the microphone stops
   void stopListening() {
-    if (_isListening) {
+    if (_isListening || _isStarting) {
+      _isStarting = false;
       // Set listening to false first to prevent any pending callbacks from updating the controller
       setState(() {
         _isListening = false;
         _partialText = '';
+        _soundLevel = 0.0; // Reset sound level
       });
-      _speech.stop();
+      if (_speech.isListening) {
+        _speech.stop();
+      }
     }
   }
 
@@ -2236,12 +2369,67 @@ class _InputBarState extends State<_InputBar> {
   Widget _buildHoldToTalkButton(ThemeData theme, bool isSending) {
     return Container(
       key: const ValueKey('hold-to-talk-button'),
-      child: GestureDetector(
-      // Long press to start recording
-      onLongPressStart: (_) => _startHoldToTalk(),
-      onLongPressEnd: (_) => _stopHoldToTalk(),
-      onLongPressCancel: () => _stopHoldToTalk(),
-      child: Container(
+      child: Listener(
+        // Use Listener for more reliable pointer events
+        // Add slight delay to prevent accidental triggers (less sensitive)
+        onPointerDown: (_) {
+          _pointerDownTime = DateTime.now();
+          _hasStartedFromPointer = false;
+          // Start after a small delay (100ms) to require deliberate press
+          Future.delayed(const Duration(milliseconds: 100), () {
+            // Only start if pointer is still down and we haven't started yet
+            if (_pointerDownTime != null && !_hasStartedFromPointer && mounted) {
+              _hasStartedFromPointer = true;
+              _startHoldToTalk();
+            }
+          });
+        },
+        onPointerUp: (_) {
+          _pointerDownTime = null;
+          if (_hasStartedFromPointer) {
+            _stopHoldToTalk();
+          }
+          _hasStartedFromPointer = false;
+        },
+        onPointerCancel: (_) {
+          _pointerDownTime = null;
+          if (_hasStartedFromPointer) {
+            _stopHoldToTalk();
+          }
+          _hasStartedFromPointer = false;
+        },
+        child: GestureDetector(
+          // GestureDetector as backup - but Listener handles the main events
+          // Only trigger if Listener didn't already handle it
+          onTapDown: (_) {
+            // Only start if pointer wasn't already tracked by Listener
+            if (_pointerDownTime == null) {
+              _pointerDownTime = DateTime.now();
+              _hasStartedFromPointer = false;
+              Future.delayed(const Duration(milliseconds: 100), () {
+                if (_pointerDownTime != null && !_hasStartedFromPointer && mounted) {
+                  _hasStartedFromPointer = true;
+                  _startHoldToTalk();
+                }
+              });
+            }
+          },
+          onTapUp: (_) {
+            if (_hasStartedFromPointer) {
+              _stopHoldToTalk();
+            }
+            _pointerDownTime = null;
+            _hasStartedFromPointer = false;
+          },
+          onTapCancel: () {
+            if (_hasStartedFromPointer) {
+              _stopHoldToTalk();
+            }
+            _pointerDownTime = null;
+            _hasStartedFromPointer = false;
+          },
+          behavior: HitTestBehavior.opaque,
+          child: Container(
         height: 56,
         decoration: BoxDecoration(
           color: _isListening
@@ -2267,16 +2455,20 @@ class _InputBarState extends State<_InputBar> {
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(
-                  _isListening ? Icons.mic : Icons.mic_none,
-                  color: _isListening
-                      ? theme.colorScheme.onErrorContainer
-                      : theme.colorScheme.onSurface.withOpacity(0.7),
-                  size: 24,
-                ),
+                if (_isListening)
+                  _SoundWaveform(
+                    soundLevel: _soundLevel,
+                    color: theme.colorScheme.onErrorContainer,
+                  )
+                else
+                  Icon(
+                    Icons.record_voice_over,
+                    color: theme.colorScheme.onSurface.withOpacity(0.7),
+                    size: 24,
+                  ),
                 const SizedBox(width: 12),
                 Text(
-                  _isListening ? 'Recording...' : 'Hold to talk',
+                  _isListening ? 'Release to send' : 'Hold to talk',
                   style: theme.textTheme.bodyLarge?.copyWith(
                     fontSize: 16,
                     color: _isListening
@@ -2317,8 +2509,15 @@ class _InputBarState extends State<_InputBar> {
                       setState(() {
                         _isHoldToTalkMode = false;
                       });
+                      // Focus the text input after switching back to text mode
+                      // Use a small delay to ensure the TextField is visible after AnimatedSwitcher
+                      Future.delayed(const Duration(milliseconds: 250), () {
+                        if (mounted) {
+                          _focusNode.requestFocus();
+                        }
+                      });
                     },
-                    icon: const Icon(Icons.arrow_back),
+                    icon: const Icon(Icons.keyboard),
                     style: IconButton.styleFrom(
                       backgroundColor: theme.colorScheme.surfaceContainerHigh,
                       shape: const CircleBorder(),
@@ -2330,7 +2529,8 @@ class _InputBarState extends State<_InputBar> {
               ),
           ],
         ),
-      ),
+          ),
+        ),
       ),
     );
   }
@@ -2567,6 +2767,7 @@ class _InputBarState extends State<_InputBar> {
                     : TextField(
                 key: const ValueKey('text-input'),
                 controller: widget.controller,
+                focusNode: _focusNode,
                 minLines: 1,
                 maxLines: 6,
                 textInputAction: TextInputAction.send,
@@ -2682,7 +2883,7 @@ class _InputBarState extends State<_InputBar> {
                                             ? 'Switch to text input' 
                                             : 'Switch to voice input',
                                         onPressed: _toggleHoldToTalkMode,
-                                        icon: Icon(_isHoldToTalkMode ? Icons.keyboard : Icons.mic_none),
+                                        icon: Icon(_isHoldToTalkMode ? Icons.keyboard : Icons.record_voice_over),
                                         style: IconButton.styleFrom(
                                           backgroundColor:
                                               theme.colorScheme.surfaceContainerHigh,
@@ -3173,6 +3374,96 @@ class _PulsingCircleState extends State<_PulsingCircle>
           ),
           width: 80 * _animation.value,
           height: 80 * _animation.value,
+        );
+      },
+    );
+  }
+}
+
+/// Widget that displays a real-time waveform visualization that responds to voice input
+/// Common practice: smooth, responsive bars with slight phase offsets for natural wave effect
+class _SoundWaveform extends StatefulWidget {
+  const _SoundWaveform({
+    required this.soundLevel,
+    required this.color,
+  });
+
+  final double soundLevel; // 0.0 to 1.0
+  final Color color;
+
+  @override
+  State<_SoundWaveform> createState() => _SoundWaveformState();
+}
+
+class _SoundWaveformState extends State<_SoundWaveform>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  final int _barCount = 5;
+  final List<double> _currentLevels = [0.2, 0.2, 0.2, 0.2, 0.2]; // Current smoothed levels
+  final List<double> _targetLevels = [0.2, 0.2, 0.2, 0.2, 0.2]; // Target levels from sound input
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 50), // Fast updates for real-time feel
+      vsync: this,
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(_SoundWaveform oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Update target levels when sound level changes
+    // Each bar responds to different frequency ranges for natural variation
+    for (int i = 0; i < _barCount; i++) {
+      // Create variation: bars at different positions respond differently
+      // This simulates how different frequencies are picked up
+      final frequencyResponse = 0.6 + (i * 0.2); // Varies from 0.6 to 1.4
+      // Add slight phase offset for wave effect
+      final phaseOffset = (i * 0.1) % 1.0;
+      final adjustedLevel = widget.soundLevel * frequencyResponse;
+      _targetLevels[i] = (adjustedLevel + phaseOffset * 0.2).clamp(0.15, 1.0);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        // Smooth interpolation for real-time updates
+        // Use exponential smoothing for natural movement
+        for (int i = 0; i < _barCount; i++) {
+          // Fast response (0.3 damping) for real-time feel, but smooth enough to avoid jitter
+          _currentLevels[i] = _currentLevels[i] * 0.7 + _targetLevels[i] * 0.3;
+        }
+
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: List.generate(_barCount, (index) {
+            final barHeight = _currentLevels[index];
+            
+            return Container(
+              margin: EdgeInsets.only(
+                left: index == 0 ? 0 : 3,
+                right: index == _barCount - 1 ? 0 : 3,
+              ),
+              width: 3,
+              height: 20 * barHeight,
+              decoration: BoxDecoration(
+                color: widget.color,
+                borderRadius: BorderRadius.circular(1.5),
+              ),
+            );
+          }),
         );
       },
     );

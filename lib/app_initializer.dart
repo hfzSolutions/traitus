@@ -7,26 +7,51 @@ import 'package:traitus/services/supabase_service.dart';
 /// Handles heavy, synchronous startup work before the main UI appears.
 /// By centralizing initialization we can kick it off before runApp while
 /// still showing a Flutter-rendered splash right away.
+/// 
+/// Now optimized to be non-blocking: shows UI immediately and loads in background.
 class AppInitializer {
   AppInitializer._();
 
   static Future<void>? _initialization;
+  static bool _isInitialized = false;
 
-  /// Starts initialization once and reuses the same future for hot restarts.
-  static Future<void> initialize() {
-    _initialization ??= _runInitialization();
-    return _initialization!;
+  /// Starts initialization - waits for critical parts, then continues in background
+  /// Critical initialization (env + Supabase) must complete before UI shows
+  /// Non-critical initialization continues in background
+  static Future<void> initialize() async {
+    // Critical initialization - must complete before UI shows
+    // This is fast (just loading env and initializing Supabase)
+    try {
+      await dotenv.load(fileName: '.env');
+      await SupabaseService.getInstance();
+      _isInitialized = true;
+    } catch (e) {
+      debugPrint('Critical initialization error: $e');
+      // Still allow app to start - will fail gracefully later
+      _isInitialized = true; // Set to true anyway to prevent infinite waiting
+    }
+
+    // Start background initialization (non-blocking)
+    // Don't await - let it run in background while UI shows
+    _initialization ??= _runBackgroundInitialization();
   }
 
-  static Future<void> _runInitialization() async {
-    await dotenv.load(fileName: '.env');
-    await SupabaseService.getInstance();
+  /// Check if critical initialization is done (env + Supabase)
+  static bool get isInitialized => _isInitialized;
 
-    // Run remaining non-critical work in parallel so we unblock the UI asap.
-    await Future.wait([
-      _initializeAppConfig(),
-      NotificationService.initialize(),
-    ]);
+  /// Background initialization - runs after UI is shown
+  static Future<void> _runBackgroundInitialization() async {
+    try {
+      // Run remaining non-critical work in parallel
+      await Future.wait([
+        _initializeAppConfig(),
+        NotificationService.initialize(),
+      ]);
+      debugPrint('AppInitializer: Background initialization complete');
+    } catch (e) {
+      debugPrint('AppInitializer: Background initialization error: $e');
+      // Non-critical, app continues
+    }
   }
 
   static Future<void> _initializeAppConfig() async {

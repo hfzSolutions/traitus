@@ -50,10 +50,14 @@ class SupabaseService {
   Future<AuthResponse> signUp({
     required String email,
     required String password,
+    String? username,
   }) async {
     return await client.auth.signUp(
       email: email,
       password: password,
+      data: username != null && username.isNotEmpty
+          ? {'display_name': username}
+          : null,
     );
   }
 
@@ -95,6 +99,37 @@ class SupabaseService {
         authScreenLaunchMode: LaunchMode.externalApplication,
       );
       return true;
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  // Delete account via edge function
+  Future<Map<String, dynamic>> deleteAccount() async {
+    try {
+      // Get the current session token
+      final session = client.auth.currentSession;
+      if (session == null) {
+        throw Exception('No active session');
+      }
+
+      // Call the delete-account edge function
+      final response = await client.functions.invoke(
+        'delete-account',
+        headers: {
+          'Authorization': 'Bearer ${session.accessToken}',
+        },
+      );
+
+      if (response.status != 200) {
+        final errorData = response.data as Map<String, dynamic>?;
+        throw Exception(
+          errorData?['error'] as String? ?? 'Failed to delete account',
+        );
+      }
+
+      final data = response.data as Map<String, dynamic>?;
+      return data ?? {'success': true};
     } catch (e) {
       rethrow;
     }
