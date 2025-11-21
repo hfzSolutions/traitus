@@ -36,8 +36,10 @@ class ChatProvider extends ChangeNotifier {
     try {
       return AppConfigService.instance.getCachedDefaultModel();
     } catch (e) {
-      // Cache not available - this shouldn't happen if initialize() was called
-      throw StateError('Model cache not initialized. Ensure AppConfigService.instance.initialize() is called during app startup.');
+      // Cache not available yet during app startup - use fallback
+      // This is normal during initialization and will be resolved when cache loads
+      debugPrint('ChatProvider: Using fallback model, cache not ready yet');
+      return 'google/gemini-2.5-flash'; // Safe fallback that matches your DB default
     }
   }
 

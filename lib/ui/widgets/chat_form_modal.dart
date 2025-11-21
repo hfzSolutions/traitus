@@ -111,37 +111,54 @@ class _ChatFormModalState extends State<ChatFormModal> {
     });
 
     try {
+      // CRITICAL: Ensure AppConfigService is initialized before loading models
+      // This is especially important after fresh login when cache might not be ready
+      await AppConfigService.instance.initialize();
+      
       final models = await _dbService.fetchModels();
       if (mounted) {
         setState(() {
           _models = models;
           _isLoadingModels = false;
-          // If no model selected, prioritize default_model from app_config
-          if (_selectedModelId == null) {
-            try {
-              // Always use default_model from app_config first
-              _selectedModelId = AppConfigService.instance.getCachedDefaultModel();
-            } catch (e) {
-              // Only fallback to first model from list if default_model not available
-              if (models.isNotEmpty) {
+        });
+        
+        // If no model selected, get default_model from app_config
+        if (_selectedModelId == null) {
+          try {
+            // Use safe method to ensure it fetches from DB if cache not available
+            final defaultModel = await AppConfigService.instance.getDefaultModelSafe();
+            if (mounted) {
+              setState(() {
+                _selectedModelId = defaultModel;
+              });
+            }
+          } catch (e) {
+            // Only fallback to first model from list if default_model not available
+            if (models.isNotEmpty && mounted) {
+              setState(() {
                 _selectedModelId = models.first.modelId;
-              }
+              });
             }
           }
-        });
+        }
       }
     } catch (e) {
       if (mounted) {
         setState(() {
           _isLoadingModels = false;
         });
-        // Fallback to default model from database cache on error
+        // Try to get default model as fallback
         if (_selectedModelId == null) {
           try {
-            _selectedModelId = AppConfigService.instance.getCachedDefaultModel();
+            final defaultModel = await AppConfigService.instance.getDefaultModelSafe();
+            if (mounted) {
+              setState(() {
+                _selectedModelId = defaultModel;
+              });
+            }
           } catch (e) {
             // If cache not available and no models loaded, leave as null
-            // User will need to select a model
+            // User will need to select a model or will see error when saving
           }
         }
       }
@@ -314,13 +331,22 @@ class _ChatFormModalState extends State<ChatFormModal> {
         }
       }
 
+      // Ensure AppConfigService is initialized before getting model
+      // This handles the case where user logs in and immediately tries to create a chat
+      try {
+        await AppConfigService.instance.initialize();
+      } catch (e) {
+        // Continue anyway, getDefaultModelSafe() will try to fetch from DB
+      }
+      
       // Always use default_model from app_config for new chats (especially quick create)
       // For editing existing chats, use the selected model or default
       String modelToUse;
       if (widget.isCreating && widget.chat == null) {
         // For new chats, always use default_model from app_config
+        // Use getDefaultModelSafe() to ensure it fetches from DB if cache not available
         try {
-          modelToUse = AppConfigService.instance.getCachedDefaultModel();
+          modelToUse = await AppConfigService.instance.getDefaultModelSafe();
         } catch (e) {
           // Fallback to selected model if available
           modelToUse = _selectedModelId ?? '';
@@ -328,7 +354,7 @@ class _ChatFormModalState extends State<ChatFormModal> {
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Please ensure default_model is set in app_config table.'),
+                  content: Text('Unable to get default model. Please try again or contact support.'),
                   duration: Duration(seconds: 3),
                 ),
               );
@@ -340,15 +366,15 @@ class _ChatFormModalState extends State<ChatFormModal> {
         // For editing existing chats, use selected model or default
         modelToUse = _selectedModelId ?? '';
         if (modelToUse.isEmpty) {
-          // Try to get from cache as last resort
+          // Try to get from database as last resort
           try {
-            modelToUse = AppConfigService.instance.getCachedDefaultModel();
+            modelToUse = await AppConfigService.instance.getDefaultModelSafe();
           } catch (e) {
-            // If still empty, throw error
+            // If still empty, show error
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Please select a model or ensure default_model is set in app_config table.'),
+                  content: Text('Please select a model or try again later.'),
                   duration: Duration(seconds: 3),
                 ),
               );
@@ -513,13 +539,6 @@ class _ChatFormModalState extends State<ChatFormModal> {
                         ] else ...[
                           // Show multiple variations for selection
                           if (_generatedVariations.isNotEmpty) ...[
-                            Text(
-                              'Choose a variation:',
-                              style: theme.textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(height: 12),
                             // List of variations
                             ...List.generate(_generatedVariations.length, (index) {
                               final variation = _generatedVariations[index];

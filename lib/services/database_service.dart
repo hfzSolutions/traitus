@@ -4,6 +4,7 @@ import 'package:traitus/models/ai_chat.dart';
 import 'package:traitus/models/chat_message.dart';
 import 'package:traitus/models/model.dart';
 import 'package:traitus/models/note.dart';
+import 'package:traitus/models/note_section.dart';
 import 'package:traitus/models/user_profile.dart';
 import 'package:traitus/services/supabase_service.dart';
 import 'package:traitus/services/app_config_service.dart';
@@ -300,6 +301,114 @@ class DatabaseService {
         .eq('user_id', userId);
   }
 
+  // ========== NOTE SECTIONS ==========
+
+  /// Fetch all sections for a note
+  Future<List<NoteSection>> fetchNoteSections(String noteId) async {
+    final userId = SupabaseService.client.auth.currentUser?.id;
+    if (userId == null) throw Exception('User not authenticated');
+
+    // Verify note belongs to user (will throw if not found or access denied)
+    await _client
+        .from('notes')
+        .select('id')
+        .eq('id', noteId)
+        .eq('user_id', userId)
+        .single();
+
+    final response = await _client
+        .from('note_sections')
+        .select()
+        .eq('note_id', noteId)
+        .order('created_at', ascending: false);
+
+    return (response as List)
+        .map((json) => NoteSection.fromJson(json))
+        .toList();
+  }
+
+  /// Create a new note section
+  Future<NoteSection> createNoteSection(NoteSection section) async {
+    final userId = SupabaseService.client.auth.currentUser?.id;
+    if (userId == null) throw Exception('User not authenticated');
+
+    // Verify note belongs to user (will throw if not found or access denied)
+    await _client
+        .from('notes')
+        .select('id')
+        .eq('id', section.noteId)
+        .eq('user_id', userId)
+        .single();
+
+    final sectionData = section.toJson();
+
+    final response = await _client
+        .from('note_sections')
+        .insert(sectionData)
+        .select()
+        .single();
+
+    return NoteSection.fromJson(response);
+  }
+
+  /// Update a note section
+  Future<void> updateNoteSection(NoteSection section) async {
+    final userId = SupabaseService.client.auth.currentUser?.id;
+    if (userId == null) throw Exception('User not authenticated');
+
+    // Verify section belongs to user's note (will throw if not found)
+    final sectionResponse = await _client
+        .from('note_sections')
+        .select('note_id')
+        .eq('id', section.id)
+        .single();
+
+    final noteId = sectionResponse['note_id'] as String;
+
+    // Verify note belongs to user (will throw if not found or access denied)
+    await _client
+        .from('notes')
+        .select('id')
+        .eq('id', noteId)
+        .eq('user_id', userId)
+        .single();
+
+    await _client
+        .from('note_sections')
+        .update({
+          'content': section.content,
+        })
+        .eq('id', section.id);
+  }
+
+  /// Delete a note section
+  Future<void> deleteNoteSection(String sectionId) async {
+    final userId = SupabaseService.client.auth.currentUser?.id;
+    if (userId == null) throw Exception('User not authenticated');
+
+    // Verify section belongs to user's note (will throw if not found)
+    final sectionResponse = await _client
+        .from('note_sections')
+        .select('note_id')
+        .eq('id', sectionId)
+        .single();
+
+    final noteId = sectionResponse['note_id'] as String;
+
+    // Verify note belongs to user (will throw if not found or access denied)
+    await _client
+        .from('notes')
+        .select('id')
+        .eq('id', noteId)
+        .eq('user_id', userId)
+        .single();
+
+    await _client
+        .from('note_sections')
+        .delete()
+        .eq('id', sectionId);
+  }
+
   // ========== USER PROFILES ==========
 
   /// Fetch user profile for the current user
@@ -341,6 +450,40 @@ class DatabaseService {
         .single();
 
     return UserProfile.fromJson(response);
+  }
+
+  /// Ensure user profile exists (fallback if trigger fails)
+  /// This creates a minimal profile if one doesn't exist
+  Future<void> ensureUserProfileExists() async {
+    final userId = SupabaseService.client.auth.currentUser?.id;
+    if (userId == null) throw Exception('User not authenticated');
+
+    final user = SupabaseService.client.auth.currentUser;
+    if (user == null) throw Exception('User not authenticated');
+
+    // Check if profile exists
+    final existing = await fetchUserProfile();
+    if (existing != null) {
+      return; // Profile already exists
+    }
+
+    // Create a minimal profile if it doesn't exist
+    final displayName = user.userMetadata?['display_name'] as String? ??
+        user.userMetadata?['full_name'] as String? ??
+        user.userMetadata?['name'] as String? ??
+        user.email?.split('@')[0] ??
+        'User';
+
+    await _client.from('user_profiles').insert({
+      'id': userId,
+      'display_name': displayName,
+      'onboarding_completed': false,
+      'preferences': [],
+      'created_at': DateTime.now().toIso8601String(),
+      'updated_at': DateTime.now().toIso8601String(),
+    });
+
+    debugPrint('Created fallback user profile for user $userId');
   }
 
   /// Update user avatar URL
@@ -542,16 +685,21 @@ class DatabaseService {
           .select('key, value');
 
       final Map<String, String> config = {};
-      for (final item in (response as List)) {
+      for (final item in response) {
         final key = item['key'] as String?;
         final value = item['value'] as String?;
         if (key != null && value != null) {
           config[key] = value;
         }
       }
+      
+      if (config.isEmpty) {
+        debugPrint('[DatabaseService] Warning: app_config query returned empty results. Check RLS policies.');
+      }
+      
       return config;
     } catch (e) {
-      debugPrint('Error fetching all app config: $e');
+      debugPrint('[DatabaseService] Error fetching all app config: $e');
       return {};
     }
   }

@@ -99,7 +99,17 @@ This will:
 - ✅ Generate Linux icons
 - ✅ Generate Web icons (192px, 512px, maskable variants)
 
-### 4. Verify Icons
+### 4. Regenerate Native Splash (when assets/logo.png changes)
+
+Traitus shows a branded native splash (before Flutter renders) using [`flutter_native_splash`](https://pub.dev/packages/flutter_native_splash). If you update `assets/logo.png` or the splash colors in `pubspec.yaml`, regenerate the native splash assets so Android and iOS pick up the new visuals:
+
+```bash
+dart run flutter_native_splash:create
+```
+
+Rebuild the app afterward to see the updated splash screen.
+
+### 5. Verify Icons
 
 After generation, you can verify the icons were created:
 

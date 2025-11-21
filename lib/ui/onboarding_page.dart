@@ -799,14 +799,19 @@ class _OnboardingPageState extends State<OnboardingPage>
       // Success toast removed per request
 
       // Refresh chats so Home shows the latest list created during onboarding
+      // This is critical - we MUST wait for the refresh to complete
       try {
         await context.read<ChatsListProvider>().refreshChats();
-      } catch (_) {}
+      } catch (e) {
+        // Continue anyway - chats will load when HomePage initializes
+      }
 
-      // Ensure we leave onboarding after success
-      // Give the snackbar a tick to show, then navigate to Home
-      await Future.delayed(const Duration(milliseconds: 200));
+      // Give the provider time to notify listeners and update UI
+      await Future.delayed(const Duration(milliseconds: 500));
+      
       if (!mounted) return;
+      
+      // Navigate to Home - chats should now be visible
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const HomePage()),
         (route) => false,

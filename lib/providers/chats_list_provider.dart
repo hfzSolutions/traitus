@@ -57,20 +57,6 @@ class ChatsListProvider extends ChangeNotifier {
       // Ensure realtime updates are active
       _ensureRealtimeSubscribed();
       
-      // If no chats exist, create a default one
-      if (_chats.isEmpty) {
-        // Get default model from database (required)
-        final model = await AppConfigService.instance.getDefaultModel();
-        
-        final defaultChat = AiChat(
-          name: 'AI Assistant',
-          shortDescription: 'A helpful AI assistant',
-          systemPrompt: 'You are a helpful, friendly AI assistant. You provide clear and concise answers. Use markdown for structure when appropriate.',
-          model: model,
-        );
-        await addChat(defaultChat);
-      }
-      
       _isLoaded = true;
       
       // Preload recent messages for all chats in the background
@@ -187,8 +173,13 @@ class ChatsListProvider extends ChangeNotifier {
   }
 
   /// Reload chats from database
+  /// Forces a full reload and notifies listeners
   Future<void> refreshChats() async {
     _isLoaded = false;
+    notifyListeners(); // Notify immediately to show loading state
+    
+    // Reset loading state to allow _loadChats to run
+    _isLoading = false;
     await _loadChats();
   }
 

@@ -14,8 +14,8 @@ class DefaultAIConfig {
       // Fallback to default model if cache not initialized yet
       // This can happen during app startup before initialization completes
       // The actual model will be fetched asynchronously when needed
-      debugPrint('Warning: Model cache not initialized, using fallback model. Error: $e');
-      return 'minimax/minimax-m2:free'; // Default fallback model
+      debugPrint('DefaultAIConfig: Using fallback model during initialization');
+      return 'google/gemini-2.5-flash'; // Default fallback model (matches DB default)
     }
   }
   

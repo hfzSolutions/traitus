@@ -11,6 +11,8 @@ class AuthProvider extends ChangeNotifier {
   User? _user;
   UserProfile? _userProfile;
   bool _isLoading = false;
+  bool _isEmailSignInLoading = false;
+  bool _isGoogleSignInLoading = false;
   bool _isInitializing = true; // Track initial profile load
   String? _error;
 
@@ -28,6 +30,8 @@ class AuthProvider extends ChangeNotifier {
   UserProfile? get userProfile => _userProfile;
   bool get isAuthenticated => _user != null;
   bool get isLoading => _isLoading;
+  bool get isEmailSignInLoading => _isEmailSignInLoading;
+  bool get isGoogleSignInLoading => _isGoogleSignInLoading;
   bool get isInitializing => _isInitializing; // Expose initializing state
   String? get error => _error;
 
@@ -50,6 +54,14 @@ class AuthProvider extends ChangeNotifier {
   Future<void> _loadUserProfile() async {
     try {
       _userProfile = await _databaseService.fetchUserProfile();
+      
+      // Fallback: If profile doesn't exist, try to create it
+      // This handles cases where the database trigger failed
+      if (_userProfile == null && _user != null) {
+        debugPrint('User profile missing, creating fallback profile...');
+        await _databaseService.ensureUserProfileExists();
+        _userProfile = await _databaseService.fetchUserProfile();
+      }
     } catch (e) {
       debugPrint('Error loading user profile: $e');
     } finally {
@@ -71,15 +83,33 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _supabaseService.signUp(
+      final response = await _supabaseService.signUp(
         email: email,
         password: password,
       );
       
-      // Important: Sign out immediately after signup
-      // This forces users to verify email and sign in explicitly
-      await _supabaseService.signOut();
-      _user = null;
+      // If signup successful and user is authenticated, ensure profile exists
+      if (response.user != null) {
+        _user = response.user;
+        
+        // Give the database trigger a moment to create the profile
+        await Future.delayed(const Duration(milliseconds: 500));
+        
+        // Ensure profile exists (fallback if trigger failed)
+        try {
+          await _databaseService.ensureUserProfileExists();
+          await _loadUserProfile();
+        } catch (profileError) {
+          debugPrint('Error ensuring profile exists: $profileError');
+          // Continue even if profile creation fails
+        }
+        
+        // Sign out after ensuring profile exists
+        // This forces users to verify email and sign in explicitly
+        await _supabaseService.signOut();
+        _user = null;
+        _userProfile = null;
+      }
     } catch (e) {
       _error = e.toString();
       rethrow;
@@ -93,7 +123,7 @@ class AuthProvider extends ChangeNotifier {
     required String email,
     required String password,
   }) async {
-    _isLoading = true;
+    _isEmailSignInLoading = true;
     _error = null;
     notifyListeners();
 
@@ -109,7 +139,7 @@ class AuthProvider extends ChangeNotifier {
       _error = e.toString();
       rethrow;
     } finally {
-      _isLoading = false;
+      _isEmailSignInLoading = false;
       notifyListeners();
     }
   }
@@ -180,8 +210,16 @@ class AuthProvider extends ChangeNotifier {
   }
 
   bool get needsOnboarding {
-    return _user != null && 
-           (_userProfile == null || !_userProfile!.onboardingCompleted);
+    if (_user == null) {
+      return false;
+    }
+    if (_isInitializing) {
+      return false;
+    }
+    if (_userProfile == null) {
+      return true;
+    }
+    return !_userProfile!.onboardingCompleted;
   }
 
   /// Mark onboarding as not completed so the app routes to onboarding again
@@ -218,8 +256,24 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> signInWithGoogle() async {
+  Future<void> resendVerificationEmail(String email) async {
     _isLoading = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      await _supabaseService.resendVerificationEmail(email);
+    } catch (e) {
+      _error = e.toString();
+      rethrow;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> signInWithGoogle() async {
+    _isGoogleSignInLoading = true;
     _error = null;
     notifyListeners();
 
@@ -231,7 +285,7 @@ class AuthProvider extends ChangeNotifier {
       _error = e.toString();
       rethrow;
     } finally {
-      _isLoading = false;
+      _isGoogleSignInLoading = false;
       notifyListeners();
     }
   }

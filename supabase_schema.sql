@@ -110,6 +110,9 @@ CREATE TABLE public.user_profiles (
   preferred_language character varying DEFAULT 'en'::character varying,
   experience_level character varying,
   use_context character varying,
+  last_app_activity timestamp with time zone,
+  re_engagement_enabled boolean DEFAULT true,
+  last_re_engagement_sent timestamp with time zone,
   CONSTRAINT user_profiles_pkey PRIMARY KEY (id),
   CONSTRAINT user_profiles_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id)
 );
