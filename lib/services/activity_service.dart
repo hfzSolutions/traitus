@@ -1,11 +1,29 @@
 import 'package:flutter/foundation.dart';
 import 'package:traitus/services/supabase_service.dart';
+import 'package:traitus/app_initializer.dart';
 
 /// Service to track user activity for re-engagement purposes
 class ActivityService {
   static final ActivityService _instance = ActivityService._internal();
   factory ActivityService() => _instance;
   ActivityService._internal();
+
+  /// Check if Supabase is initialized and ready to use
+  bool _isSupabaseReady() {
+    // First check if AppInitializer says it's initialized
+    if (!AppInitializer.isInitialized) {
+      return false;
+    }
+    
+    try {
+      // Try to access Supabase - if it throws, it's not initialized
+      final _ = SupabaseService.client;
+      return true;
+    } catch (e) {
+      // Supabase not initialized yet
+      return false;
+    }
+  }
 
   /// Update the last app activity timestamp for the current user
   /// This should be called when:
@@ -14,6 +32,12 @@ class ActivityService {
   /// - User performs any significant interaction
   Future<void> updateLastActivity() async {
     try {
+      // Check if Supabase is initialized before using it
+      if (!_isSupabaseReady()) {
+        debugPrint('ActivityService: Supabase not initialized yet, skipping activity update');
+        return;
+      }
+
       final userId = SupabaseService.client.auth.currentUser?.id;
       if (userId == null) {
         debugPrint('ActivityService: No user logged in, skipping activity update');
@@ -37,6 +61,11 @@ class ActivityService {
   /// Returns null if user is not logged in or activity data is not available
   Future<int?> getDaysSinceLastActivity() async {
     try {
+      // Check if Supabase is initialized before using it
+      if (!_isSupabaseReady()) {
+        return null;
+      }
+
       final userId = SupabaseService.client.auth.currentUser?.id;
       if (userId == null) return null;
 

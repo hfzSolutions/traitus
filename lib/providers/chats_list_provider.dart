@@ -7,6 +7,7 @@ import 'package:traitus/services/database_service.dart';
 import 'package:traitus/services/storage_service.dart';
 import 'package:traitus/services/supabase_service.dart';
 import 'package:traitus/services/app_config_service.dart';
+import 'package:traitus/services/chat_cache_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class ChatsListProvider extends ChangeNotifier {
@@ -39,8 +40,22 @@ class ChatsListProvider extends ChangeNotifier {
     
     _isLoading = true;
     _error = null;
-    notifyListeners();
+    
+    // STEP 1: Load from cache immediately (instant display like Telegram/WhatsApp)
+    try {
+      final cachedChats = await ChatCacheService.loadChats();
+      if (cachedChats != null && cachedChats.isNotEmpty) {
+        _chats = cachedChats;
+        _isLoaded = true;
+        notifyListeners(); // Show cached data immediately
+        debugPrint('ChatsListProvider: Showing ${cachedChats.length} cached chats');
+      }
+    } catch (e) {
+      debugPrint('ChatsListProvider: Error loading cache: $e');
+      // Continue to load from database
+    }
 
+    // STEP 2: Refresh from database in background (updates cache)
     try {
       // Initialize app config cache early (await to ensure it's ready)
       // This ensures model configs are available when needed
@@ -51,9 +66,18 @@ class ChatsListProvider extends ChangeNotifier {
         // Continue anyway - will fail later if model is needed
       }
       
-      _chats = await _dbService.fetchChats();
+      // Fetch fresh data from database
+      final freshChats = await _dbService.fetchChats();
+      
       // Populate unread counts concurrently
       await _refreshUnreadCounts();
+      
+      // Update chats with fresh data
+      _chats = freshChats;
+      
+      // Save to cache for next app launch
+      await ChatCacheService.saveChats(freshChats);
+      
       // Ensure realtime updates are active
       _ensureRealtimeSubscribed();
       
@@ -64,9 +88,12 @@ class ChatsListProvider extends ChangeNotifier {
       _preloadRecentMessages();
     } catch (e) {
       _error = e.toString();
-      debugPrint('Error loading chats: $e');
-      // Start with empty list on error
-      _chats = [];
+      debugPrint('Error loading chats from database: $e');
+      // If we have cached data, keep showing it
+      // If no cache, show empty list
+      if (_chats.isEmpty) {
+        _chats = [];
+      }
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -174,7 +201,11 @@ class ChatsListProvider extends ChangeNotifier {
 
   /// Reload chats from database
   /// Forces a full reload and notifies listeners
+  /// Note: This will still show cache first, then refresh
   Future<void> refreshChats() async {
+    // Clear cache to force fresh load
+    await ChatCacheService.clearCache();
+    
     _isLoaded = false;
     notifyListeners(); // Notify immediately to show loading state
     
@@ -223,6 +254,8 @@ class ChatsListProvider extends ChangeNotifier {
     try {
       final createdChat = await _dbService.createChat(chat);
       _chats.insert(0, createdChat); // Add to beginning
+      // Update cache
+      await ChatCacheService.saveChats(_chats);
       notifyListeners();
     } catch (e) {
       _error = e.toString();
@@ -237,6 +270,8 @@ class ChatsListProvider extends ChangeNotifier {
       final index = _chats.indexWhere((chat) => chat.id == updatedChat.id);
       if (index != -1) {
         _chats[index] = updatedChat;
+        // Update cache
+        await ChatCacheService.saveChats(_chats);
         notifyListeners();
       }
     } catch (e) {
@@ -262,6 +297,8 @@ class ChatsListProvider extends ChangeNotifier {
         );
         await _dbService.updateChat(updatedChat);
         _chats[index] = updatedChat;
+        // Update cache
+        await ChatCacheService.saveChats(_chats);
         notifyListeners();
       }
     } catch (e) {
@@ -300,6 +337,8 @@ class ChatsListProvider extends ChangeNotifier {
         );
         await _dbService.updateChat(updatedChat);
         _chats[index] = updatedChat;
+        // Update cache
+        await ChatCacheService.saveChats(_chats);
         notifyListeners();
       }
     } catch (e) {
@@ -350,6 +389,9 @@ class ChatsListProvider extends ChangeNotifier {
       
       // Delete from database (this also deletes messages via cascade)
       await _dbService.deleteChat(chatId);
+      
+      // Update cache after deletion
+      await ChatCacheService.saveChats(_chats);
       
       // Delete avatar from storage if it exists
       // If not immediate, we schedule it for later (after undo window)
@@ -414,6 +456,8 @@ class ChatsListProvider extends ChangeNotifier {
         
         // Re-sort the chats list
         _sortChats();
+        // Update cache
+        await ChatCacheService.saveChats(_chats);
         notifyListeners();
       }
     } catch (e) {
@@ -458,6 +502,8 @@ class ChatsListProvider extends ChangeNotifier {
         }
       }
 
+      // Update cache
+      await ChatCacheService.saveChats(_chats);
       notifyListeners();
     } catch (e) {
       _error = e.toString();
@@ -555,6 +601,9 @@ class ChatsListProvider extends ChangeNotifier {
             }
 
             _chats[index] = updated;
+            // Update cache when new message arrives
+            // ignore: unawaited_futures
+            ChatCacheService.saveChats(_chats);
             notifyListeners();
           } catch (e) {
             debugPrint('Realtime message handling error: $e');

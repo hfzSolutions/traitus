@@ -16,6 +16,8 @@ import 'package:traitus/ui/update_required_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Wait for critical initialization (env + Supabase) before showing UI
+  // This is fast and necessary for the app to work
   await AppInitializer.initialize();
   runApp(const MyApp());
 }

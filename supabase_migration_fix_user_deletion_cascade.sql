@@ -10,61 +10,123 @@
 -- ========================================
 -- 1. Fix user_profiles foreign key
 -- ========================================
-ALTER TABLE public.user_profiles
-  DROP CONSTRAINT IF EXISTS user_profiles_id_fkey;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'user_profiles') THEN
+    ALTER TABLE public.user_profiles
+      DROP CONSTRAINT IF EXISTS user_profiles_id_fkey;
 
-ALTER TABLE public.user_profiles
-  ADD CONSTRAINT user_profiles_id_fkey
-    FOREIGN KEY (id) REFERENCES auth.users(id) ON DELETE CASCADE;
+    ALTER TABLE public.user_profiles
+      ADD CONSTRAINT user_profiles_id_fkey
+        FOREIGN KEY (id) REFERENCES auth.users(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 -- ========================================
 -- 2. Fix user_entitlements foreign key
 -- ========================================
-ALTER TABLE public.user_entitlements
-  DROP CONSTRAINT IF EXISTS user_entitlements_user_id_fkey;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'user_entitlements') THEN
+    ALTER TABLE public.user_entitlements
+      DROP CONSTRAINT IF EXISTS user_entitlements_user_id_fkey;
 
-ALTER TABLE public.user_entitlements
-  ADD CONSTRAINT user_entitlements_user_id_fkey
-    FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+    ALTER TABLE public.user_entitlements
+      ADD CONSTRAINT user_entitlements_user_id_fkey
+        FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 -- ========================================
 -- 3. Fix notes foreign key
 -- ========================================
-ALTER TABLE public.notes
-  DROP CONSTRAINT IF EXISTS notes_user_id_fkey;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'notes') THEN
+    ALTER TABLE public.notes
+      DROP CONSTRAINT IF EXISTS notes_user_id_fkey;
 
-ALTER TABLE public.notes
-  ADD CONSTRAINT notes_user_id_fkey
-    FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
-
--- ========================================
--- 4. Fix chats foreign key
--- ========================================
-ALTER TABLE public.chats
-  DROP CONSTRAINT IF EXISTS chats_user_id_fkey;
-
-ALTER TABLE public.chats
-  ADD CONSTRAINT chats_user_id_fkey
-    FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+    ALTER TABLE public.notes
+      ADD CONSTRAINT notes_user_id_fkey
+        FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 -- ========================================
--- 5. Fix messages foreign keys
+-- 4. Fix chats foreign key (only if table exists)
 -- ========================================
--- First, fix the user_id foreign key
-ALTER TABLE public.messages
-  DROP CONSTRAINT IF EXISTS messages_user_id_fkey;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'chats') THEN
+    ALTER TABLE public.chats
+      DROP CONSTRAINT IF EXISTS chats_user_id_fkey;
 
-ALTER TABLE public.messages
-  ADD CONSTRAINT messages_user_id_fkey
-    FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+    ALTER TABLE public.chats
+      ADD CONSTRAINT chats_user_id_fkey
+        FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
--- Then, fix the chat_id foreign key (so when a chat is deleted, messages are deleted too)
-ALTER TABLE public.messages
-  DROP CONSTRAINT IF EXISTS messages_chat_id_fkey;
+-- ========================================
+-- 5. Fix messages foreign keys (only if table exists)
+-- ========================================
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'messages') THEN
+    -- First, fix the user_id foreign key
+    ALTER TABLE public.messages
+      DROP CONSTRAINT IF EXISTS messages_user_id_fkey;
 
-ALTER TABLE public.messages
-  ADD CONSTRAINT messages_chat_id_fkey
-    FOREIGN KEY (chat_id) REFERENCES public.chats(id) ON DELETE CASCADE;
+    ALTER TABLE public.messages
+      ADD CONSTRAINT messages_user_id_fkey
+        FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+    -- Then, fix the chat_id foreign key (so when a chat is deleted, messages are deleted too)
+    -- Only if chats table exists
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'chats') THEN
+      ALTER TABLE public.messages
+        DROP CONSTRAINT IF EXISTS messages_chat_id_fkey;
+
+      ALTER TABLE public.messages
+        ADD CONSTRAINT messages_chat_id_fkey
+          FOREIGN KEY (chat_id) REFERENCES public.chats(id) ON DELETE CASCADE;
+    END IF;
+  END IF;
+END $$;
+
+-- ========================================
+-- 5.5. Clean up any orphaned foreign key constraints
+-- ========================================
+-- Remove any foreign key constraints that reference non-existent tables
+DO $$
+DECLARE
+  constraint_record RECORD;
+BEGIN
+  -- Find and drop foreign key constraints that reference non-existent tables
+  FOR constraint_record IN
+    SELECT 
+      tc.constraint_name,
+      tc.table_name,
+      ccu.table_name AS referenced_table
+    FROM information_schema.table_constraints tc
+    JOIN information_schema.constraint_column_usage ccu
+      ON tc.constraint_name = ccu.constraint_name
+    WHERE tc.constraint_type = 'FOREIGN KEY'
+      AND tc.table_schema = 'public'
+      AND ccu.table_schema = 'public'
+      AND (
+        (ccu.table_name = 'chats' AND NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'chats'))
+        OR (ccu.table_name = 'messages' AND NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'messages'))
+      )
+  LOOP
+    EXECUTE format('ALTER TABLE public.%I DROP CONSTRAINT IF EXISTS %I', 
+      constraint_record.table_name, 
+      constraint_record.constraint_name);
+    RAISE NOTICE 'Dropped orphaned constraint % from table %', 
+      constraint_record.constraint_name, 
+      constraint_record.table_name;
+  END LOOP;
+END $$;
 
 -- ========================================
 -- 6. Create function to clean up storage files when user is deleted

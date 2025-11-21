@@ -12,6 +12,7 @@ class SignupPage extends StatefulWidget {
 
 class _SignupPageState extends State<SignupPage> {
   final _emailController = TextEditingController();
+  final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
@@ -21,6 +22,7 @@ class _SignupPageState extends State<SignupPage> {
   @override
   void dispose() {
     _emailController.dispose();
+    _usernameController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     super.dispose();
@@ -33,6 +35,7 @@ class _SignupPageState extends State<SignupPage> {
       await authProvider.signUp(
         email: _emailController.text.trim(),
         password: _passwordController.text,
+        username: _usernameController.text.trim(),
       );
       if (!mounted) return;
       
@@ -277,6 +280,30 @@ class _SignupPageState extends State<SignupPage> {
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 48),
+                  TextFormField(
+                    controller: _usernameController,
+                    textInputAction: TextInputAction.next,
+                    decoration: InputDecoration(
+                      labelText: 'Username',
+                      prefixIcon: const Icon(Icons.person_outline),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'Please enter a username';
+                      }
+                      if (value.trim().length < 2) {
+                        return 'Username must be at least 2 characters';
+                      }
+                      if (value.trim().length > 30) {
+                        return 'Username must be less than 30 characters';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 16),
                   TextFormField(
                     controller: _emailController,
                     keyboardType: TextInputType.emailAddress,
