@@ -179,7 +179,7 @@ class _ChatListPageState extends State<ChatListPage> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'Pull to refresh or start a conversation with your AI assistant',
+                          'Click the create button to add an AI assistant',
                           style: theme.textTheme.bodyMedium?.copyWith(
                             color: theme.colorScheme.onSurface.withOpacity(0.6),
                           ),

@@ -1,16 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:provider/provider.dart';
+import 'package:traitus/app_initializer.dart';
 import 'package:traitus/models/app_version_info.dart';
 import 'package:traitus/providers/auth_provider.dart';
 import 'package:traitus/providers/chats_list_provider.dart';
 import 'package:traitus/providers/notes_provider.dart';
 import 'package:traitus/providers/theme_provider.dart';
-import 'package:traitus/services/notification_service.dart';
+import 'package:traitus/services/activity_service.dart';
 import 'package:traitus/services/supabase_service.dart';
 import 'package:traitus/services/version_control_service.dart';
-import 'package:traitus/services/app_config_service.dart';
-import 'package:traitus/services/activity_service.dart';
 import 'package:traitus/ui/auth_page.dart';
 import 'package:traitus/ui/home_page.dart';
 import 'package:traitus/ui/onboarding_page.dart';
@@ -18,25 +16,7 @@ import 'package:traitus/ui/update_required_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // Load environment variables
-  await dotenv.load(fileName: '.env');
-  
-  // Initialize Supabase
-  await SupabaseService.getInstance();
-  
-  // Initialize app config (model settings from database)
-  // This must be done before creating providers that need models
-  try {
-    await AppConfigService.instance.initialize();
-  } catch (e) {
-    debugPrint('Warning: Failed to initialize app config: $e');
-    // Continue anyway - will fail later if model is needed
-  }
-  
-  // Initialize OneSignal notifications
-  await NotificationService.initialize();
-  
+  await AppInitializer.initialize();
   runApp(const MyApp());
 }
 
@@ -186,7 +166,15 @@ class _AuthCheckPageState extends State<AuthCheckPage> with WidgetsBindingObserv
     final content = Consumer<AuthProvider>(
       builder: (context, authProvider, _) {
         if (authProvider.isInitializing) {
-          return const _LoadingScreen();
+          if (!authProvider.isAuthenticated) {
+            return const AuthPage();
+          }
+
+          if (authProvider.needsOnboarding) {
+            return const OnboardingPage();
+          }
+
+          return const HomePage();
         }
 
         if (!authProvider.isAuthenticated) {
@@ -219,26 +207,4 @@ class _AuthCheckPageState extends State<AuthCheckPage> with WidgetsBindingObserv
   }
 }
 
-/// Loading/Splash screen shown while checking auth state
-class _LoadingScreen extends StatelessWidget {
-  const _LoadingScreen();
 
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    
-    return Scaffold(
-      backgroundColor: theme.colorScheme.surface,
-      body: SafeArea(
-        child: Center(
-          child: Image.asset(
-            'assets/logo.png',
-            width: 120,
-            height: 120,
-            fit: BoxFit.contain,
-          ),
-        ),
-      ),
-    );
-  }
-}

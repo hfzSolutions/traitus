@@ -78,6 +78,14 @@ class SupabaseService {
     await client.auth.resetPasswordForEmail(email);
   }
 
+  // Resend verification email
+  Future<void> resendVerificationEmail(String email) async {
+    await client.auth.resend(
+      type: OtpType.signup,
+      email: email,
+    );
+  }
+
   // Sign in with Google
   Future<bool> signInWithGoogle() async {
     try {

@@ -19,9 +19,14 @@ class AppConfigService {
     if (_isInitializing) {
       return _initializationFuture ?? Future.value();
     }
-    if (_cachedConfig != null && 
+    
+    // CRITICAL FIX: Check if cache is empty, not just if it exists
+    final cacheIsEmpty = _cachedConfig == null || _cachedConfig!.isEmpty;
+    final cacheIsFresh = _cachedConfig != null && 
         _cacheTimestamp != null && 
-        DateTime.now().difference(_cacheTimestamp!) < _cacheDuration) {
+        DateTime.now().difference(_cacheTimestamp!) < _cacheDuration;
+    
+    if (!cacheIsEmpty && cacheIsFresh) {
       return; // Already cached and fresh
     }
     
@@ -36,8 +41,12 @@ class AppConfigService {
     try {
       _cachedConfig = await _dbService.fetchAllAppConfig();
       _cacheTimestamp = DateTime.now();
+      
+      if (_cachedConfig == null || _cachedConfig!.isEmpty) {
+        debugPrint('[AppConfigService] Warning: Fetched empty config from database');
+      }
     } catch (e) {
-      debugPrint('Error refreshing app config cache: $e');
+      debugPrint('[AppConfigService] Error refreshing app config cache: $e');
       rethrow;
     }
   }
@@ -45,10 +54,13 @@ class AppConfigService {
   /// Get default model for chats
   /// Must be set in app_config table with key 'default_model'
   Future<String> getDefaultModel() async {
-    // Ensure cache is initialized
-    if (_cachedConfig == null || 
-        _cacheTimestamp == null || 
-        DateTime.now().difference(_cacheTimestamp!) >= _cacheDuration) {
+    // CRITICAL FIX: If cache is empty, force refresh even if timestamp is fresh
+    // This handles the case where cache was initialized before user login (empty result)
+    final cacheIsEmpty = _cachedConfig == null || _cachedConfig!.isEmpty;
+    final cacheIsStale = _cacheTimestamp == null || 
+        DateTime.now().difference(_cacheTimestamp!) >= _cacheDuration;
+    
+    if (cacheIsEmpty || cacheIsStale) {
       await _refreshCache();
     }
     

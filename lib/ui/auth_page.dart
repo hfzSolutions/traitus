@@ -148,14 +148,14 @@ class _AuthPageState extends State<AuthPage> {
                   Consumer<AuthProvider>(
                     builder: (context, authProvider, _) {
                       return FilledButton(
-                        onPressed: authProvider.isLoading ? null : _handleAuth,
+                        onPressed: authProvider.isEmailSignInLoading ? null : _handleAuth,
                         style: FilledButton.styleFrom(
                           padding: const EdgeInsets.symmetric(vertical: 16),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
                         ),
-                        child: authProvider.isLoading
+                        child: authProvider.isEmailSignInLoading
                             ? const SizedBox(
                                 height: 20,
                                 width: 20,
@@ -212,7 +212,7 @@ class _AuthPageState extends State<AuthPage> {
                             }
                           }
                         },
-                        isLoading: authProvider.isLoading,
+                        isLoading: authProvider.isGoogleSignInLoading,
                         text: 'Continue with Google',
                       );
                     },
@@ -222,22 +222,12 @@ class _AuthPageState extends State<AuthPage> {
                   // Navigate to Sign Up
                   TextButton(
                     onPressed: () async {
-                      final result = await Navigator.of(context).push<bool>(
+                      await Navigator.of(context).push<bool>(
                         MaterialPageRoute(
                           builder: (_) => const SignupPage(),
                         ),
                       );
-                      if (result == true && mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Account created successfully! Please sign in to continue.',
-                            ),
-                            backgroundColor: Colors.green,
-                            duration: Duration(seconds: 4),
-                          ),
-                        );
-                      }
+                      // No need to show snackbar - signup page shows email verification dialog
                     },
                     child: const Text('Don\'t have an account? Sign Up'),
                   ),

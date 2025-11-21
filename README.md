@@ -60,6 +60,14 @@ SUPABASE_ANON_KEY=your_supabase_anon_key_here
 flutter pub get
 ```
 
+**Native splash screen:** whenever you update `assets/logo.png` or adjust the splash colors in `pubspec.yaml`, regenerate the platform assets:
+
+```bash
+dart run flutter_native_splash:create
+```
+
+This keeps the branded splash (shown before Flutter renders) in sync across Android and iOS.
+
 ### 5. Run the App
 
 ```bash

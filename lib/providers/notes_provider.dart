@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:traitus/models/note.dart';
+import 'package:traitus/models/note_section.dart';
 import 'package:traitus/services/database_service.dart';
 
 class NotesProvider with ChangeNotifier {
@@ -42,7 +43,7 @@ class NotesProvider with ChangeNotifier {
     await _loadNotes();
   }
 
-  Future<void> addNote({
+  Future<Note> addNote({
     required String title,
     required String content,
   }) async {
@@ -55,6 +56,7 @@ class NotesProvider with ChangeNotifier {
       final createdNote = await _dbService.createNote(note);
       _notes.insert(0, createdNote); // Add to beginning (most recent first)
       notifyListeners();
+      return createdNote;
     } catch (e) {
       _error = e.toString();
       debugPrint('Error adding note: $e');
@@ -105,6 +107,65 @@ class NotesProvider with ChangeNotifier {
       return _notes.firstWhere((note) => note.id == id);
     } catch (e) {
       return null;
+    }
+  }
+
+  /// Add a section to an existing note
+  Future<NoteSection> addSectionToNote({
+    required String noteId,
+    required String content,
+  }) async {
+    try {
+      final section = NoteSection(
+        noteId: noteId,
+        content: content,
+      );
+      
+      final createdSection = await _dbService.createNoteSection(section);
+      notifyListeners();
+      return createdSection;
+    } catch (e) {
+      _error = e.toString();
+      debugPrint('Error adding section to note: $e');
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  /// Fetch sections for a note
+  Future<List<NoteSection>> fetchNoteSections(String noteId) async {
+    try {
+      return await _dbService.fetchNoteSections(noteId);
+    } catch (e) {
+      _error = e.toString();
+      debugPrint('Error fetching note sections: $e');
+      rethrow;
+    }
+  }
+
+  /// Update a note section
+  Future<void> updateNoteSection(NoteSection section) async {
+    try {
+      await _dbService.updateNoteSection(section);
+      notifyListeners();
+    } catch (e) {
+      _error = e.toString();
+      debugPrint('Error updating note section: $e');
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  /// Delete a note section
+  Future<void> deleteNoteSection(String sectionId) async {
+    try {
+      await _dbService.deleteNoteSection(sectionId);
+      notifyListeners();
+    } catch (e) {
+      _error = e.toString();
+      debugPrint('Error deleting note section: $e');
+      notifyListeners();
+      rethrow;
     }
   }
 }

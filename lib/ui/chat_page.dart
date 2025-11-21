@@ -313,13 +313,11 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
           final existingNote = notesProvider.notes.firstWhere(
             (note) => note.title == title,
           );
-          final separator = '\n\n---\n\n*Added ${_formatTimestamp(DateTime.now())}*\n\n';
-          final updatedContent = existingNote.content + separator + content;
           
-          await notesProvider.updateNote(
-            id: existingNote.id,
-            title: title,
-            content: updatedContent,
+          // Create a new section instead of combining content
+          await notesProvider.addSectionToNote(
+            noteId: existingNote.id,
+            content: content,
           );
           
           return true;
@@ -329,47 +327,76 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
             (note) => note.title == title,
           );
           
-          // Remove the content from the note
-          String updatedContent = existingNote.content;
-          
-          // Try to find and remove the content with separator
-          final contentWithSeparator = '\n\n---\n\n*Added ${_formatTimestamp(DateTime.now())}*\n\n$content';
-          if (updatedContent.contains(contentWithSeparator)) {
-            updatedContent = updatedContent.replaceFirst(contentWithSeparator, '');
-          } else {
-            // Try to find it with any timestamp
-            final regexPattern = RegExp(
-              r'\n\n---\n\n\*Added .*?\*\n\n' + RegExp.escape(content),
-              dotAll: true,
+          // Try to find and delete the section with matching content
+          try {
+            final sections = await notesProvider.fetchNoteSections(existingNote.id);
+            final matchingSection = sections.firstWhere(
+              (section) => section.content == content,
+              orElse: () => throw Exception('Section not found'),
             );
-            updatedContent = updatedContent.replaceFirst(regexPattern, '');
+            
+            await notesProvider.deleteNoteSection(matchingSection.id);
+            
+            // Check if note has any sections or content left
+            final remainingSections = await notesProvider.fetchNoteSections(existingNote.id);
+            if (remainingSections.isEmpty && existingNote.content.isEmpty) {
+              // No sections and no content, delete the note
+              await notesProvider.deleteNote(existingNote.id);
+            }
+          } catch (e) {
+            // If section not found, try old method (backward compatibility)
+            // Remove the content from the note's content field
+            String updatedContent = existingNote.content;
+            
+            // Try to find and remove the content with separator
+            final contentWithSeparator = '\n\n---\n\n*Added ${_formatTimestamp(DateTime.now())}*\n\n$content';
+            if (updatedContent.contains(contentWithSeparator)) {
+              updatedContent = updatedContent.replaceFirst(contentWithSeparator, '');
+            } else {
+              // Try to find it with any timestamp
+              final regexPattern = RegExp(
+                r'\n\n---\n\n\*Added .*?\*\n\n' + RegExp.escape(content),
+                dotAll: true,
+              );
+              updatedContent = updatedContent.replaceFirst(regexPattern, '');
+            }
+            
+            // If content is at the beginning (no separator before it)
+            if (updatedContent.isEmpty || updatedContent.trim().isEmpty) {
+              // If note is now empty, delete the entire note
+              await notesProvider.deleteNote(existingNote.id);
+              return true;
+            } else if (existingNote.content == content) {
+              // This was the only content in the note
+              await notesProvider.deleteNote(existingNote.id);
+              return true;
+            } else {
+              // Update the note with content removed
+              updatedContent = updatedContent.trim();
+              await notesProvider.updateNote(
+                id: existingNote.id,
+                title: title,
+                content: updatedContent,
+              );
+              return true;
+            }
           }
           
-          // If content is at the beginning (no separator before it)
-          if (updatedContent.isEmpty || updatedContent.trim().isEmpty) {
-            // If note is now empty, delete the entire note
-            await notesProvider.deleteNote(existingNote.id);
-            return true;
-          } else if (existingNote.content == content) {
-            // This was the only content in the note
-            await notesProvider.deleteNote(existingNote.id);
-            return true;
-          } else {
-            // Update the note with content removed
-            updatedContent = updatedContent.trim();
-            await notesProvider.updateNote(
-              id: existingNote.id,
-              title: title,
-              content: updatedContent,
-            );
-            return true;
-          }
+          return true;
         },
         onCreateNewNote: (title) async {
-          await notesProvider.addNote(
+          // Create note with empty content, then add a section
+          final note = await notesProvider.addNote(
             title: title,
+            content: '', // Empty content, we'll use sections
+          );
+          
+          // Add the content as a section
+          await notesProvider.addSectionToNote(
+            noteId: note.id,
             content: content,
           );
+          
           return true;
         },
       ),
@@ -386,7 +413,18 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(message),
-          duration: const Duration(seconds: 2),
+          duration: const Duration(seconds: 3),
+          action: SnackBarAction(
+            label: 'View',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const NotesPage(isInTabView: false),
+                ),
+              );
+            },
+          ),
         ),
       );
     }
@@ -2775,6 +2813,7 @@ class _SaveNoteBottomSheetState extends State<_SaveNoteBottomSheet> {
       ),
       child: Container(
         constraints: BoxConstraints(
+          minHeight: 300,
           maxHeight: mediaQuery.size.height * 0.85,
         ),
         decoration: BoxDecoration(
@@ -2782,305 +2821,302 @@ class _SaveNoteBottomSheetState extends State<_SaveNoteBottomSheet> {
           borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         ),
         child: Consumer<NotesProvider>(
-            builder: (context, notesProvider, _) {
-              // Use notes from provider (always up-to-date) instead of widget parameter
-              final notes = notesProvider.notes;
-              
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Handle bar
-                  Container(
-                    margin: const EdgeInsets.only(top: 12),
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.onSurfaceVariant.withOpacity(0.4),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
+          builder: (context, notesProvider, _) {
+            final notes = notesProvider.notes;
+            
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Handle bar
+                Container(
+                  margin: const EdgeInsets.only(top: 12),
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.onSurfaceVariant.withOpacity(0.4),
+                    borderRadius: BorderRadius.circular(2),
                   ),
-                  
-                  // Title
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
-                    child: Row(
-                      children: [
-                        if (_isCreatingNew)
-                          IconButton(
-                            icon: const Icon(Icons.arrow_back),
-                            onPressed: () {
-                              setState(() {
-                                _isCreatingNew = false;
-                                _titleController.clear();
-                              });
-                            },
-                            tooltip: 'Back',
+                ),
+                
+                // Header
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+                  child: Row(
+                    children: [
+                      if (_isCreatingNew)
+                        IconButton(
+                          icon: const Icon(Icons.arrow_back),
+                          onPressed: () {
+                            setState(() {
+                              _isCreatingNew = false;
+                              _titleController.clear();
+                            });
+                          },
+                          tooltip: 'Back',
+                        ),
+                      Expanded(
+                        child: Text(
+                          (_isCreatingNew || notes.isEmpty) ? 'Create New Note' : 'Save to Note',
+                          style: theme.textTheme.headlineSmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      if (!_isCreatingNew && notes.isNotEmpty)
+                        TextButton.icon(
+                          onPressed: () {
+                            setState(() {
+                              _isCreatingNew = true;
+                            });
+                          },
+                          icon: const Icon(Icons.add, size: 18),
+                          label: const Text('New'),
+                          style: TextButton.styleFrom(
                             visualDensity: VisualDensity.compact,
                           ),
-                        Expanded(
+                        ),
+                      if (!_isCreatingNew || notes.isEmpty)
+                        IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () => Navigator.pop(context),
+                          tooltip: 'Close',
+                        ),
+                    ],
+                  ),
+                ),
+                
+                // Content area
+                Flexible(
+                  child: (_isCreatingNew || notes.isEmpty)
+                      ? _buildCreateNoteForm(theme)
+                      : _buildNotesList(theme, notes),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCreateNoteForm(ThemeData theme) {
+    return Form(
+      key: _formKey,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Flexible(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Enter a title for your new note',
+                    style: theme.textTheme.bodyLarge?.copyWith(
+                      color: theme.colorScheme.onSurface.withOpacity(0.8),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  TextFormField(
+                    controller: _titleController,
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      labelText: 'Note Title',
+                      hintText: 'e.g., Meeting Notes, Ideas',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      filled: true,
+                      fillColor: theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 16,
+                      ),
+                    ),
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'Please enter a title';
+                      }
+                      return null;
+                    },
+                    onFieldSubmitted: (value) => _handleCreateNote(),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(
+                  color: theme.colorScheme.outlineVariant,
+                  width: 1,
+                ),
+              ),
+            ),
+            child: FilledButton.icon(
+              onPressed: _handleCreateNote,
+              icon: const Icon(Icons.check),
+              label: const Text('Create & Save'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNotesList(ThemeData theme, List<Note> notes) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Notes list
+        Flexible(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 200),
+            child: ListView.separated(
+              shrinkWrap: true,
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+              itemCount: notes.length,
+              separatorBuilder: (context, index) => const SizedBox(height: 8),
+              itemBuilder: (context, index) {
+                final note = notes[index];
+                final isAlreadySaved = _noteContainsContent(note);
+                
+                return _buildNoteCard(theme, note, isAlreadySaved);
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNoteCard(ThemeData theme, Note note, bool isAlreadySaved) {
+    return InkWell(
+      onTap: () async {
+        if (isAlreadySaved) {
+          await widget.onRemoveFromNote(note.title);
+        } else {
+          await widget.onSaveToNote(note.title);
+        }
+        if (mounted) {
+          Navigator.pop(
+            context,
+            {'action': isAlreadySaved ? 'remove' : 'add'},
+          );
+        }
+      },
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: isAlreadySaved
+              ? theme.colorScheme.primaryContainer.withOpacity(0.3)
+              : theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isAlreadySaved
+                ? theme.colorScheme.primary.withOpacity(0.3)
+                : theme.colorScheme.outlineVariant,
+            width: 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            // Icon
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: isAlreadySaved
+                    ? theme.colorScheme.primary.withOpacity(0.1)
+                    : theme.colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                isAlreadySaved ? Icons.bookmark : Icons.bookmark_border,
+                size: 20,
+                color: isAlreadySaved
+                    ? theme.colorScheme.primary
+                    : theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(width: 12),
+            
+            // Note info
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          note.title,
+                          style: theme.textTheme.bodyLarge?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: isAlreadySaved
+                                ? theme.colorScheme.primary
+                                : null,
+                          ),
+                        ),
+                      ),
+                      if (isAlreadySaved)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.primary,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
                           child: Text(
-                            _isCreatingNew ? 'Create New Note' : 'Save to Note',
-                            style: theme.textTheme.headlineSmall?.copyWith(
+                            'Saved',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: theme.colorScheme.onPrimary,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
                         ),
-                        if (!_isCreatingNew)
-                          TextButton.icon(
-                            onPressed: () {
-                              Navigator.pop(context);
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => const NotesPage(isInTabView: false),
-                                ),
-                              );
-                            },
-                            icon: const Icon(Icons.list, size: 18),
-                            label: const Text('View All'),
-                            style: TextButton.styleFrom(
-                              visualDensity: VisualDensity.compact,
-                            ),
-                          ),
-                      ],
+                    ],
+                  ),
+                  if (note.content.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      note.content.length > 60
+                          ? '${note.content.substring(0, 60)}...'
+                          : note.content,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurface.withOpacity(0.6),
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                  ),
-                  const Divider(height: 1),
-                  
-                  // Content area
-                  Flexible(
-                    child: _isCreatingNew
-                        ? // Create new note form
-                          SingleChildScrollView(
-                            padding: const EdgeInsets.all(20),
-                            child: Form(
-                              key: _formKey,
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  Text(
-                                    'Give your note a title to save this message.',
-                                    style: theme.textTheme.bodyMedium?.copyWith(
-                                      color: theme.colorScheme.onSurface.withOpacity(0.7),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 20),
-                                  TextFormField(
-                                    controller: _titleController,
-                                    autofocus: true,
-                                    decoration: InputDecoration(
-                                      labelText: 'Note Title',
-                                      hintText: 'e.g., Important Ideas, Meeting Notes',
-                                      border: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      filled: true,
-                                      fillColor: theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
-                                      prefixIcon: const Icon(Icons.title),
-                                    ),
-                                    validator: (value) {
-                                      if (value == null || value.trim().isEmpty) {
-                                        return 'Please enter a title';
-                                      }
-                                      return null;
-                                    },
-                                    onFieldSubmitted: (value) => _handleCreateNote(),
-                                  ),
-                                  const SizedBox(height: 24),
-                                  FilledButton.icon(
-                                    onPressed: _handleCreateNote,
-                                    icon: const Icon(Icons.check),
-                                    label: const Text('Create Note'),
-                                    style: FilledButton.styleFrom(
-                                      padding: const EdgeInsets.symmetric(vertical: 16),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          )
-                        : // List of existing notes
-                          notes.isEmpty
-                              ? // Empty state
-                                SingleChildScrollView(
-                                  padding: const EdgeInsets.all(20),
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      const SizedBox(height: 40),
-                                      Icon(
-                                        Icons.bookmark_border,
-                                        size: 64,
-                                        color: theme.colorScheme.onSurface.withOpacity(0.3),
-                                      ),
-                                      const SizedBox(height: 16),
-                                      Text(
-                                        'No Notes Yet',
-                                        style: theme.textTheme.titleLarge?.copyWith(
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        'Create your first note to save messages and organize your thoughts.',
-                                        style: theme.textTheme.bodyMedium?.copyWith(
-                                          color: theme.colorScheme.onSurface.withOpacity(0.6),
-                                        ),
-                                        textAlign: TextAlign.center,
-                                      ),
-                                      const SizedBox(height: 32),
-                                      FilledButton.icon(
-                                        onPressed: () {
-                                          setState(() {
-                                            _isCreatingNew = true;
-                                          });
-                                        },
-                                        icon: const Icon(Icons.add),
-                                        label: const Text('Create First Note'),
-                                        style: FilledButton.styleFrom(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 24,
-                                            vertical: 16,
-                                          ),
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(12),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                )
-                              : // Notes list
-                                Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    // Notes list
-                                    Flexible(
-                                      child: ListView.separated(
-                                        shrinkWrap: true,
-                                        padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-                                        itemCount: notes.length,
-                                        separatorBuilder: (context, index) => const Divider(height: 1),
-                                        itemBuilder: (context, index) {
-                                          final note = notes[index];
-                                          final isAlreadySaved = _noteContainsContent(note);
-                                          
-                                          return ListTile(
-                                            contentPadding: const EdgeInsets.symmetric(
-                                              horizontal: 0,
-                                              vertical: 8,
-                                            ),
-                                            title: Text(
-                                              note.title,
-                                              style: theme.textTheme.bodyLarge?.copyWith(
-                                                fontWeight: isAlreadySaved
-                                                    ? FontWeight.w600
-                                                    : FontWeight.normal,
-                                                color: isAlreadySaved
-                                                    ? theme.colorScheme.primary
-                                                    : null,
-                                              ),
-                                            ),
-                                            subtitle: note.content.isNotEmpty
-                                                ? Text(
-                                                    note.content.length > 50
-                                                        ? '${note.content.substring(0, 50)}...'
-                                                        : note.content,
-                                                    style: theme.textTheme.bodySmall?.copyWith(
-                                                      color: theme.colorScheme.onSurface.withOpacity(0.6),
-                                                    ),
-                                                    maxLines: 1,
-                                                    overflow: TextOverflow.ellipsis,
-                                                  )
-                                                : null,
-                                            trailing: FilledButton(
-                                              onPressed: () async {
-                                                if (isAlreadySaved) {
-                                                  await widget.onRemoveFromNote(note.title);
-                                                  if (context.mounted) {
-                                                    Navigator.pop(context, {'action': 'remove'});
-                                                  }
-                                                } else {
-                                                  await widget.onSaveToNote(note.title);
-                                                  if (context.mounted) {
-                                                    Navigator.pop(context, {'action': 'add'});
-                                                  }
-                                                }
-                                              },
-                                              style: FilledButton.styleFrom(
-                                                backgroundColor: isAlreadySaved
-                                                    ? theme.colorScheme.error
-                                                    : theme.colorScheme.primary,
-                                                foregroundColor: isAlreadySaved
-                                                    ? theme.colorScheme.onError
-                                                    : theme.colorScheme.onPrimary,
-                                                padding: const EdgeInsets.symmetric(
-                                                  horizontal: 16,
-                                                  vertical: 8,
-                                                ),
-                                                shape: RoundedRectangleBorder(
-                                                  borderRadius: BorderRadius.circular(12),
-                                                ),
-                                              ),
-                                              child: Row(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  Icon(
-                                                    isAlreadySaved ? Icons.remove : Icons.add,
-                                                    size: 18,
-                                                  ),
-                                                  const SizedBox(width: 4),
-                                                  Text(
-                                                    isAlreadySaved ? 'Remove' : 'Add',
-                                                    style: const TextStyle(fontSize: 13),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                    ),
-                                    // Add new note button
-                                    Container(
-                                      width: double.infinity,
-                                      padding: const EdgeInsets.all(20),
-                                      decoration: BoxDecoration(
-                                        border: Border(
-                                          top: BorderSide(
-                                            color: theme.colorScheme.outlineVariant,
-                                            width: 1,
-                                          ),
-                                        ),
-                                      ),
-                                      child: OutlinedButton.icon(
-                                        onPressed: () {
-                                          setState(() {
-                                            _isCreatingNew = true;
-                                          });
-                                        },
-                                        icon: const Icon(Icons.add),
-                                        label: const Text('Create New Note'),
-                                        style: OutlinedButton.styleFrom(
-                                          padding: const EdgeInsets.symmetric(vertical: 14),
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(12),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                  ),
+                  ],
                 ],
-              );
-            },
-          ),
+              ),
+            ),
+            
+            // Action icon
+            const SizedBox(width: 8),
+            Icon(
+              isAlreadySaved ? Icons.remove_circle_outline : Icons.add_circle_outline,
+              color: isAlreadySaved
+                  ? theme.colorScheme.error
+                  : theme.colorScheme.primary,
+            ),
+          ],
         ),
+      ),
     );
   }
 }

@@ -23,45 +23,33 @@ This guide will help you complete the setup for Google Sign-In in your Traitus a
 5. Toggle **Enable Google provider** to ON
 6. You'll need to configure OAuth credentials (see Step 2)
 
-### Step 2: Create Google OAuth Credentials
+### Step 2: Create Google OAuth Client IDs (Android & iOS)
+
+Supabase now recommends using **platform-specific Google OAuth clients** instead of the old "Web application" flow. Follow Google's instructions on-screen after choosing **Android** or **iOS** as the application type.
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project or select an existing one
-3. Navigate to **APIs & Services** → **Credentials**
-4. Click **Create Credentials** → **OAuth client ID**
-5. If prompted, configure the OAuth consent screen:
-   - Choose **External** (unless you have a Google Workspace)
-   - Fill in the required information:
-     - App name: `Traitus`
-     - User support email: Your email
-     - Developer contact: Your email
-   - Add scopes: `email`, `profile`, `openid`
-   - Add test users (if in testing mode)
-6. Create OAuth client ID:
-   - **Application type: Select "Web application"** ⚠️
-     - **Why Web application?** Even though this is a Flutter mobile app, you need to select "Web application" because Supabase handles the OAuth flow through its web interface. The flow works like this:
-       1. User taps "Continue with Google" in your app
-       2. App opens Google's sign-in page in a browser/web view
-       3. User authenticates with Google
-       4. Google redirects to Supabase's web callback URL
-       5. Supabase processes the authentication
-       6. Supabase redirects back to your app via deep link (`com.hafiz.traitus://login-callback`)
-     - This works for **both iOS and Android** - you only need ONE Web application client ID
-   - Name: `Traitus Web` (or `Traitus OAuth`)
-   - Authorized redirect URIs: Add your Supabase redirect URL:
-     ```
-     https://<your-project-ref>.supabase.co/auth/v1/callback
-     ```
-     - To find your project reference: Go to Supabase Dashboard → Settings → API → Your project URL will be `https://<project-ref>.supabase.co`
-     - Example: `https://abcdefghijklmnop.supabase.co/auth/v1/callback`
-7. Click **Create**
-8. Copy the **Client ID** and **Client Secret** (you'll need both for Step 3)
+2. Select your project → **APIs & Services** → **Credentials**
+3. Click **Create Credentials** → **OAuth client ID**
+4. If prompted, finish the OAuth consent screen setup (app name, support email, scopes: `email`, `profile`, `openid`, etc.)
+5. When asked for the application type, choose based on the platform you are configuring:
+   - **Android**
+     - Package name: `com.hafiz.traitus`
+     - Provide the **SHA-1 certificate fingerprints** for each keystore you use:
+       - Debug keystore (local testing)
+       - Release keystore (Play Store / production)
+     - You can copy the SHA-1 fingerprints from Android Studio (`Gradle` pane → `app` → `Tasks` → `android` → `signingReport`) or via the `keytool` command.
+   - **iOS**
+     - Bundle ID: `com.hafiz.traitus`
+     - If the app is on the App Store, also provide the **App Store ID** and **Team ID**.
+6. Create a **separate OAuth client ID** for every environment you target (e.g., Android debug, Android release, iOS). Keep track of each Client ID—Supabase needs all of them.
+7. When you finish each client, copy the **Client ID** value. You do **not** need the Client Secret for these native clients.
 
-### Step 3: Configure Google in Supabase
+### Step 3: Register Client IDs in Supabase
 
-1. Back in Supabase Dashboard → **Authentication** → **Providers** → **Google**
-2. Paste your **Client ID** and **Client Secret** from Step 2
-3. Click **Save**
+1. Supabase Dashboard → **Authentication** → **Providers** → **Google**
+2. Paste **every Google OAuth Client ID** you generated (Android debug/release, iOS, etc.)
+3. For iOS clients, enable **Skip nonce check** (per Supabase's docs) so that Google Sign-In for iOS can complete without additional nonce handling.
+4. Click **Save**
 
 ### Step 4: Configure Redirect URLs in Supabase
 
@@ -72,16 +60,38 @@ This guide will help you complete the setup for Google Sign-In in your Traitus a
    ```
 3. Click **Save**
 
-### Step 5: Test Google Sign-In
+### Step 5: Configure iOS URL Schemes
+
+Add the Google URL scheme generated from your `GoogleService-Info.plist` (`REVERSED_CLIENT_ID`) to `ios/Runner/Info.plist`:
+
+```
+<!-- Google Sign-in Section -->
+<key>CFBundleURLTypes</key>
+<array>
+  <dict>
+    <key>CFBundleTypeRole</key>
+    <string>Editor</string>
+    <key>CFBundleURLSchemes</key>
+    <array>
+      <!-- TODO Replace this value with REVERSED_CLIENT_ID -->
+      <string>com.googleusercontent.apps.YOUR_REVERSED_CLIENT_ID</string>
+    </array>
+  </dict>
+</array>
+```
+
+If your Info.plist already has `CFBundleURLTypes`, just add another `<dict>` entry that contains the `REVERSED_CLIENT_ID`.
+
+### Step 6: Test Google Sign-In
 
 1. Run your app:
    ```bash
    flutter run
    ```
-2. On the login or signup page, tap **"Continue with Google"**
-3. You should be redirected to Google's sign-in page
-4. After signing in, you'll be redirected back to the app
-5. The app should automatically log you in
+2. On the login or signup page, tap the Google button
+3. Complete the Google sign-in flow
+4. Supabase should exchange the credentials and redirect back into the app
+5. Confirm the session was created by checking that you land on the home screen
 
 ## 📱 Platform-Specific Notes
 
@@ -155,10 +165,10 @@ To customize, edit the `GoogleSignInButton` widget. However, be careful not to v
 ## 📝 Notes
 
 - Google Sign-In works for both **sign up** and **sign in** - if a user doesn't exist, Supabase will create an account automatically
-- The OAuth flow uses Supabase's built-in OAuth handling, so no additional packages are needed
+- The Supabase Flutter SDK still handles the OAuth exchange, but Google now requires native (Android/iOS) Client IDs instead of a web client
 - User profile data (name, email, avatar) will be automatically synced from Google
-- **One Web application client ID works for both iOS and Android** - you don't need separate iOS/Android client IDs for this implementation
-- If you want to use native Google Sign-In SDKs in the future (for better UX), you would need additional iOS and Android client IDs, but the current Supabase OAuth approach works great and requires less setup
+- Maintain **separate Client IDs** for Android debug, Android release, and iOS so you can revoke or rotate each independently
+- If you add new environments (e.g., internal testing keystore), remember to register the new SHA-1 fingerprint and Client ID in both Google Cloud Console and Supabase
 
 ## ✅ Branding Compliance
 
